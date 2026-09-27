@@ -1,0 +1,28 @@
+# dependencies and build output
+node_modules/
+dist/
+*.local
+
+# Tripo pipeline outputs: concept images, raw/rigged GLBs, previews, task state
+# (regenerable with tools/tripo/gen.mjs; the cleaned game models live in public/models/)
+tools/tripo/*/
+
+# Blender render previews and Python caches
+tools/blender/previews/
+__pycache__/
+*.pyc
+
+# secrets and local environment
+.env
+.env.*
+
+# logs
+*.log
+
+# editor, OS and agent state
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+.omc/
+.claude/settings.local.json
