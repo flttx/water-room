@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Audio Engine Test</title>
+<style>
+  :root {
+    --bg: #0d1417;
+    --panel: #152126;
+    --text: #cfe3e6;
+    --muted: #7d979c;
+    --accent: #4fb8c4;
+    --btn: #1f3238;
+    --btn-hover: #2a444c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 16px;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.4 system-ui, sans-serif;
+  }
+  h1 { font-size: 18px; margin: 0 0 12px; }
+  h2 { font-size: 13px; margin: 0 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  section { background: var(--panel); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  button {
+    background: var(--btn);
+    color: var(--text);
+    border: 1px solid #2c4850;
+    border-radius: 5px;
+    padding: 6px 10px;
+    font: inherit;
+    cursor: pointer;
+  }
+  button:hover { background: var(--btn-hover); }
+  button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  label { display: inline-flex; gap: 6px; align-items: center; margin-right: 12px; }
+  input[type=range] { width: 140px; }
+  select { background: var(--btn); color: var(--text); border: 1px solid #2c4850; border-radius: 5px; padding: 5px; }
+  #status { color: var(--muted); }
+  #meter { width: 100%; max-width: 420px; height: 10px; background: #0a1013; border-radius: 5px; overflow: hidden; }
+  #meterFill { height: 100%; width: 0; background: var(--accent); transition: width 80ms linear; }
+  code { color: var(--accent); }
+</style>
+</head>
+<body>
+<h1>Procedural Audio Engine — manual test</h1>
+
+<section>
+  <h2>Engine</h2>
+  <div class="row">
+    <button id="init" aria-label="Initialise audio engine">init()</button>
+    <button data-call="suspend">suspend()</button>
+    <button data-call="resume">resume()</button>
+    <label>volume <input id="vol" type="range" min="0" max="1" step="0.01" value="0.8" aria-label="Master volume"></label>
+    <label><input id="uw" type="checkbox" aria-label="Underwater"> underwater</label>
+    <label><input id="amb" type="checkbox" checked aria-label="Ambient events"> ambient events</label>
+    <span id="status">not initialised</span>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <label>tension <input id="tension" type="range" min="0" max="1" step="0.01" value="0" aria-label="Tension"></label>
+    <label>heartbeat <input id="heart" type="range" min="0" max="1" step="0.01" value="0" aria-label="Heartbeat"></label>
+    <label>breath <input id="breath" type="range" min="0" max="1" step="0.01" value="1" aria-label="Breath"></label>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <div id="meter" role="meter" aria-label="Output level" aria-valuemin="0" aria-valuemax="1"><div id="meterFill"></div></div>
+    <code id="level">rms — peak —</code>
+  </div>
+</section>
+
+<section>
+  <h2>Player</h2>
+  <div class="row">
+    <button data-call="footstep" data-args="[0.3]">footstep(0.3)</button>
+    <button data-call="footstep" data-args="[1]">footstep(1)</button>
+    <button data-call="jumpLand" data-args="[0.8]">jumpLand(0.8)</button>
+    <button data-call="splash" data-args="[0.3]">splash(0.3)</button>
+    <button data-call="splash" data-args="[1, {&quot;x&quot;:6,&quot;y&quot;:0,&quot;z&quot;:-4}]">splash(1, pos)</button>
+    <button data-call="swimStroke" data-args="[false, 0.6]">swimStroke(surface)</button>
+    <button data-call="swimStroke" data-args="[true, 0.6]">swimStroke(under)</button>
+    <button data-call="bubbles" data-args="[0.6]">bubbles(0.6)</button>
+    <button data-call="gasp">gasp()</button>
+    <button data-call="climbOut">climbOut()</button>
+  </div>
+</section>
+
+<section>
+  <h2>World</h2>
+  <div class="row">
+    <button data-call="valveTurn" data-args="[{&quot;x&quot;:2,&quot;y&quot;:1,&quot;z&quot;:-2}]">valveTurn(pos)</button>
+    <button data-call="valveDone" data-args="[{&quot;x&quot;:2,&quot;y&quot;:1,&quot;z&quot;:-2}]">valveDone(pos)</button>
+    <button data-call="gateOpen" data-args="[{&quot;x&quot;:-8,&quot;y&quot;:0,&quot;z&quot;:-10}]">gateOpen(pos)</button>
+    <button id="lamp">createLampHum(1 m)</button>
+    <button id="lampToggle">lamp setOn toggle</button>
+    <button id="lampFar">lamp → 12 m</button>
+    <button id="lampDispose">lamp dispose()</button>
+  </div>
+</section>
+
+<section>
+  <h2>Feedback / UI</h2>
+  <div class="row">
+    <button data-call="checkpoint">checkpoint()</button>
+    <button data-call="pickup">pickup()</button>
+    <button data-call="uiHover" id="hoverBtn">uiHover()</button>
+    <button data-call="uiClick">uiClick()</button>
+    <button data-call="spotted">spotted()</button>
+    <button data-call="chaseStart">chaseStart()</button>
+    <button data-call="lostThem">lostThem()</button>
+    <button data-call="caught">caught()</button>
+    <button data-call="respawn">respawn()</button>
+    <button data-call="drown">drown()</button>
+    <button data-call="win">win()</button>
+  </div>
+</section>
+
+<section>
+  <h2>Creatures</h2>
+  <div class="row">
+    <select id="kind" aria-label="Creature kind"><option value="hunter">hunter</option><option value="colossus">colossus</option></select>
+    <button id="create">createCreatureVoice</button>
+    <select id="state" aria-label="Creature state">
+      <option>patrol</option><option>suspicious</option><option>chase</option><option>search</option>
+    </select>
+    <label>speed <input id="speed" type="range" min="0" max="1" step="0.01" value="0.3" aria-label="Creature speed"></label>
+    <label>distance <input id="dist" type="range" min="2" max="200" step="1" value="25" aria-label="Creature distance"></label>
+    <label><input id="orbit" type="checkbox" checked aria-label="Orbit listener"> orbit</label>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button data-voice="growl">growl()</button>
+    <button data-voice="roar">roar()</button>
+    <button data-voice="click">click()</button>
+    <button data-voice="call">call()</button>
+    <button id="disposeVoice">dispose()</button>
+    <span id="voices" style="color:var(--muted)">no voices</span>
+  </div>
+</section>
+
+<script type="module">
+import { AudioEngine } from '../src/audio.js';
+
+const engine = new AudioEngine();
+/** @type {{kind: string, voice: ReturnType<AudioEngine['createCreatureVoice']>, angle: number}[]} */
+const voices = [];
+/** @type {ReturnType<AudioEngine['createLampHum']>|null} */
+let lamp = null;
+let lampOn = true;
+
+const $ = (id) => /** @type {HTMLElement} */ (document.getElementById(id));
+const val = (id) => Number(/** @type {HTMLInputElement} */ ($(id)).value);
+
+window.__audioTest = { AudioEngine, engine, voices };
+
+function setStatus() {
+  $('status').textContent = engine.ready ? 'ready' : 'not initialised';
+}
+
+$('init').addEventListener('click', () => {
+  engine.init()
+    .then(() => {
+      setStatus();
+      engine.setMasterVolume(val('vol'));
+    })
+    .catch((err) => console.warn('init failed', err));
+});
+
+for (const btn of document.querySelectorAll('[data-call]')) {
+  btn.addEventListener('click', () => {
+    const name = btn.getAttribute('data-call');
+    const raw = btn.getAttribute('data-args');
+    const args = raw ? JSON.parse(raw) : [];
+    const fn = engine[name];
+    if (typeof fn === 'function') fn.apply(engine, args);
+  });
+}
+$('hoverBtn').addEventListener('pointerenter', () => engine.uiHover());
+
+$('vol').addEventListener('input', () => engine.setMasterVolume(val('vol')));
+$('uw').addEventListener('change', () => engine.setUnderwater(/** @type {HTMLInputElement} */ ($('uw')).checked));
+$('amb').addEventListener('change', () => { engine._ambientOn = /** @type {HTMLInputElement} */ ($('amb')).checked; });
+$('tension').addEventListener('input', () => engine.setTension(val('tension')));
+$('heart').addEventListener('input', () => engine.setHeartbeat(val('heart')));
+$('breath').addEventListener('input', () => engine.setBreath(val('breath')));
+
+$('lamp').addEventListener('click', () => {
+  if (lamp) lamp.dispose();
+  lamp = engine.createLampHum({ x: 1, y: 1.5, z: 0 });
+  lampOn = true;
+});
+$('lampToggle').addEventListener('click', () => {
+  if (!lamp) return;
+  lampOn = !lampOn;
+  lamp.setOn(lampOn);
+});
+$('lampFar').addEventListener('click', () => { if (lamp) lamp.setPosition(12, 1.5, 0); });
+$('lampDispose').addEventListener('click', () => {
+  if (lamp) lamp.dispose();
+  lamp = null;
+});
+
+function refreshVoices() {
+  $('voices').textContent = voices.length ? voices.map((v) => `${v.kind}:${v.voice.state}`).join(', ') : 'no voices';
+}
+$('create').addEventListener('click', () => {
+  const kind = /** @type {HTMLSelectElement} */ ($('kind')).value;
+  const voice = engine.createCreatureVoice(kind);
+  voice.setSpeed(val('speed'));
+  voices.push({ kind, voice, angle: Math.random() * Math.PI * 2 });
+  refreshVoices();
+});
+$('state').addEventListener('change', () => {
+  const s = /** @type {HTMLSelectElement} */ ($('state')).value;
+  for (const v of voices) v.voice.setState(s);
+  refreshVoices();
+});
+$('speed').addEventListener('input', () => { for (const v of voices) v.voice.setSpeed(val('speed')); });
+for (const btn of document.querySelectorAll('[data-voice]')) {
+  btn.addEventListener('click', () => {
+    const name = btn.getAttribute('data-voice');
+    for (const v of voices) v.voice[name]();
+  });
+}
+$('disposeVoice').addEventListener('click', () => {
+  const v = voices.pop();
+  if (v) v.voice.dispose();
+  refreshVoices();
+});
+
+let last = performance.now();
+let yaw = 0;
+function frame(now) {
+  const dt = Math.min(0.1, (now - last) / 1000);
+  last = now;
+  yaw += dt * 0.05;
+  engine.setListener({ x: 0, y: 1.6, z: 0 }, { x: Math.sin(yaw), y: 0, z: -Math.cos(yaw) }, { x: 0, y: 1, z: 0 });
+  const d = val('dist');
+  const orbit = /** @type {HTMLInputElement} */ ($('orbit')).checked;
+  for (const v of voices) {
+    if (orbit) v.angle += dt * 0.25;
+    v.voice.setPosition(Math.cos(v.angle) * d, v.kind === 'colossus' ? -20 : 0, Math.sin(v.angle) * d);
+    v.voice.update(dt);
+  }
+  engine.update(dt);
+  if (engine.ready) {
+    const { rms, peak } = engine._debugLevel();
+    $('meterFill').style.width = `${Math.min(100, Math.sqrt(rms) * 160)}%`;
+    const db = (x) => (x > 0 ? (20 * Math.log10(x)).toFixed(1) : '-inf');
+    $('level').textContent = `rms ${db(rms)} dB  peak ${db(peak)} dB`;
+  }
+  requestAnimationFrame(frame);
+}
+// `?auto` = driven by tools/audio-check.mjs, which calls update() itself.
+if (!new URLSearchParams(location.search).has('auto')) requestAnimationFrame(frame);
+setStatus();
+</script>
+</body>
+</html>
