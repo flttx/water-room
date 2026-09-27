@@ -1,6 +1,6 @@
 """Inspect a GLB (JSON chunk only + accessor min/max) and print a validation report.
 
-Usage: python tools/blender/validate_glb.py public/models/hunter.glb [more.glb ...]
+Usage: python tools/blender/validate_glb.py public/models/crab.glb [more.glb ...]
 Exit code 1 if a hard check fails.
 """
 import json
