@@ -1,14 +1,8 @@
 import { G, LAMP_N } from './render/shaderlib.js';
 
-/** Smooth-ish flicker pattern: long steady stretches, stutter bursts and short blackouts. */
+/** Slow, shallow variation keeps ageing lamps readable without strobing. */
 function flicker(t, ph) {
-  const a = Math.sin(t * 0.9 + ph) + Math.sin(t * 2.3 + ph * 1.7) * 0.6;
-  if (a > 1.15) {
-    const s = Math.sin(t * 43 + ph * 3) * Math.sin(t * 71 + ph);
-    return s > 0.05 ? 1 : 0.08;
-  }
-  if (a < -1.3) return 0.04;
-  return 0.93 + 0.07 * Math.sin(t * 97 + ph);
+  return 0.97 + 0.02 * Math.sin(t * 0.45 + ph) + 0.01 * Math.sin(t * 0.73 + ph * 1.7);
 }
 
 /**
@@ -18,12 +12,13 @@ function flicker(t, ph) {
 export class LampSystem {
   constructor(lamps) {
     this.lamps = lamps;
-    this.k = new Float32Array(lamps.length);
+    this.k = Float32Array.from(lamps, (l) => l.dead ? 0 : (l.power ?? 1));
     this.prevOn = new Uint8Array(lamps.length).fill(1);
     this.disturb = []; // [{x, z, r, amount}] creature interference
     this.onToggle = null;
     this._order = lamps.map((_, i) => i);
     this._score = new Float32Array(lamps.length);
+    this._lastT = null;
   }
 
   add(lamp) {
@@ -31,6 +26,7 @@ export class LampSystem {
     this.lamps.push(l);
     const k = new Float32Array(this.lamps.length);
     k.set(this.k);
+    k[k.length - 1] = l.dead ? 0 : (l.power ?? 1);
     this.k = k;
     const p = new Uint8Array(this.lamps.length).fill(1);
     p.set(this.prevOn);
@@ -42,20 +38,26 @@ export class LampSystem {
 
   update(t, cam) {
     const L = this.lamps;
+    const dt = this._lastT === null ? 0 : Math.max(0, Math.min(t - this._lastT, 0.1));
+    this._lastT = t;
+    const blend = 1 - Math.exp(-dt * 2.5);
     for (let i = 0; i < L.length; i++) {
       const l = L[i];
       let k = l.dead ? 0 : (l.power ?? 1);
       if (!l.dead && l.flicker) k *= flicker(t, l.phase);
       if (!l.dead && l.baked) {
+        let interference = 0;
         for (const d of this.disturb) {
           const dist = Math.hypot(l.x - d.x, l.z - d.z);
           if (dist < d.r) {
-            const f = (1 - dist / d.r) * d.amount;
-            const s = Math.sin(t * 31 + l.phase) * Math.sin(t * 13.7 + l.phase * 2);
-            if (s > 1 - f * 1.6) k *= 0.06;
+            interference = Math.max(interference, (1 - dist / d.r) * d.amount);
           }
         }
+        // Several nearby creatures still cause only a gentle, gradual dimming.
+        const wave = 0.75 + 0.25 * Math.sin(t * 0.65 + l.phase);
+        k *= 1 - Math.min(1, Math.max(0, interference)) * 0.16 * wave;
       }
+      k = l.dead ? 0 : this.k[i] + (k - this.k[i]) * blend;
       this.k[i] = k;
       const on = k > 0.3 ? 1 : 0;
       if (on !== this.prevOn[i]) {

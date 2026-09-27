@@ -219,9 +219,10 @@ const LAMP_LOOP = /* glsl */ `
   if (vCMask > 0.01) {
     vec3 n = normalize(vWNrm);
     vec2 cp = abs(n.y) > 0.5 ? vWPos.xz : vec2(vWPos.x + vWPos.z, vWPos.y * 1.6);
-    float c = wr_caustic(mod(cp * 0.55, 6.2831853), uTime * 0.55);
+    float c = wr_caustic(mod(cp * 0.55, 6.2831853), uTime * 0.22);
+    c = c / (1.0 + c);
     float lightHere = dot(vBake * uBakeScale, vec3(0.3333)) + 0.02;
-    reflectedLight.indirectDiffuse += material.diffuseColor * c * vCMask * lightHere * uCaustic * vec3(0.75, 0.95, 1.0) * 2.2;
+    reflectedLight.indirectDiffuse += material.diffuseColor * c * vCMask * lightHere * uCaustic * vec3(0.75, 0.95, 1.0) * 0.85;
   }
   #endif
 }

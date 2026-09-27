@@ -136,8 +136,8 @@ function makeHalos(lamps, under) {
         vec4 mv = viewMatrix * vec4(position, 1.0);
         gl_Position = projectionMatrix * mv;
         float d = max(-mv.z, 0.1);
-        gl_PointSize = clamp(size * uPx / d, 0.0, 900.0);
-        vCol = color * k;
+        gl_PointSize = clamp(size * uPx / d, 0.0, 480.0);
+        vCol = color * k * smoothstep(0.3, 1.5, length(position - cameraPosition));
       }
     `,
     fragment: /* glsl */ `
@@ -147,7 +147,7 @@ function makeHalos(lamps, under) {
         float r = length(c) * 2.0;
         if (r > 1.0) discard;
         float a = exp(-r * r * 6.0) * 0.55 + exp(-r * r * 60.0) * 0.8;
-        gl_FragColor = vec4(wr_medium(vCol * a * 0.5, vWPos), 1.0);
+        gl_FragColor = vec4(wr_medium(vCol * a * 0.25, vWPos), 1.0);
       }
     `,
   });
@@ -415,7 +415,7 @@ export class FX {
     for (const o of [this.snowUnder, this.dustAir, this.halosUnder, this.halosAir, this.shafts, this.bubbles.points, this.drips.points]) scene.add(o);
   }
 
-  /** k[i]: current brightness multiplier of lamp i (flicker / dead). */
+  /** k[i]: current brightness multiplier of lamp i (dimming / dead). */
   setLampIntensities(k) {
     for (const h of [this.halosUnder, this.halosAir]) {
       h.userData.intensity.set(k.subarray(0, h.userData.intensity.length));
@@ -423,7 +423,9 @@ export class FX {
     }
     for (const m of this.shafts.children) {
       const i = this.lamps.indexOf(m.userData.lamp);
-      m.visible = k[i] > 0.05;
+      m.userData.baseIntensity ??= m.material.uniforms.uI.value;
+      m.material.uniforms.uI.value = m.userData.baseIntensity * k[i];
+      m.visible = k[i] > 0.001;
     }
   }
 

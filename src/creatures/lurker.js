@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { sculptBody, EyeSet, buildTeeth, layoutEyes, makeSkinMaterial, TentacleBundle, Chain, makeNoise3, collideChain } from './flesh.js';
 import { GlowPoints } from './glow.js';
+import { attackClear, BodyCollider, PoseGuard, sphereClear } from './collision.js';
 import { mulberry32 } from '../render/textures.js';
 import { LURKERS } from '../level/mapdata.js';
 
@@ -122,6 +123,8 @@ class Lurker {
     this.group.add(this.fringeBundle.group);
 
     this.lamp = mgr.lampSys.add({ type: 'creature', x: hx, y: -500, z: hz, color: LURE_COL, intensity: 0, range: 7 });
+    this.bodyCollider = new BodyCollider(head.geometry, 0.12);
+    this.poseGuard = new PoseGuard([this.root], () => this._bodyClear(), () => this.root.updateMatrixWorld(true), 3);
     this.reset();
   }
 
@@ -162,6 +165,46 @@ class Lurker {
     this.homeYaw = this.yaw0;
     this.now = 0;
     this.initialised = false;
+    this.poseGuard.ready = false;
+    this._fitHome();
+  }
+
+  _bodyClear() {
+    const level = this.mgr.level, m = this.headMesh.matrixWorld;
+    if (!this.bodyCollider.clear(level, m)) return false;
+    for (const [anchor, chain] of [[this.tailLocal, this.tail], [this.stalkLocal, this.stalk], ...this.fringe.map((f) => [f.rootLocal, f.chain])]) {
+      _a.copy(anchor).applyMatrix4(m);
+      if (!sphereClear(level, _a.x, _a.y, _a.z, Math.max(...chain.r) + 0.04 + chain.seg * 0.125)) return false;
+    }
+    return true;
+  }
+
+  _fitHome() {
+    const L = this.mgr.level, base = this.home.clone(), original = this.scale;
+    const chains = [this.tail, this.stalk, ...this.fringe.map((f) => f.chain)];
+    let previousScale = 1;
+    for (const k of [1, 0.9, 0.8, 0.7, 0.6]) {
+      this.root.scale.setScalar(original * k);
+      for (const c of chains) {
+        const ratio = k / previousScale;
+        c.length *= ratio; c.seg *= ratio;
+        for (let i = 0; i < c.n; i++) c.r[i] *= ratio;
+      }
+      previousScale = k;
+      for (let ring = 0; ring <= 6; ring++) for (let dz = -ring; dz <= ring; dz++) for (let dx = -ring; dx <= ring; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dz)) !== ring) continue;
+        const x = base.x + dx * 0.5, z = base.z + dz * 0.5, tx = Math.floor(x / 2), tz = Math.floor(z / 2);
+        if (!L.isWater(tx, tz) || L.solid(tx, tz)) continue;
+        for (const y of [base.y, (L.floor(tx, tz) + Math.min(0, L.ceil(tx, tz))) / 2]) {
+          this.pos.set(x, y, z); this._place(0);
+          if (!this._bodyClear()) continue;
+          this.home.copy(this.pos); this.scale = original * k;
+          this.poseGuard.reset();
+          return;
+        }
+      }
+    }
+    throw new Error(`lurker ${this.k} has no clear lair`);
   }
 
   hear(x, y, z, r, loud) {
@@ -178,6 +221,13 @@ class Lurker {
     r.position.y += Math.sin(t * 0.6 + this.k) * 0.12 * sway;
     r.rotation.set(-this.pitch, this.yaw + Math.sin(t * 0.37 + this.k * 2) * 0.08 * sway, Math.sin(t * 0.45 + this.k) * 0.05 * sway, 'YXZ');
     r.updateMatrixWorld(true);
+    if (this.poseGuard?.ready) {
+      this.poseGuard.constrain();
+      this.pos.copy(r.position);
+      this.pos.y -= Math.sin(t * 0.6 + this.k) * 0.12 * sway;
+      this.yaw = r.rotation.y - Math.sin(t * 0.37 + this.k * 2) * 0.08 * sway;
+      this.pitch = -r.rotation.x;
+    }
     this.headMesh.localToWorld(this.maw.copy(this.mawLocal));
   }
 
@@ -283,7 +333,7 @@ class Lurker {
       const hit = p.y > 0
         ? Math.hypot(p.x - this.maw.x, p.z - this.maw.z) < 1.8 && p.y - this.maw.y < 2.7 && p.y < SAFE_EYE_Y
         : Math.hypot(p.x - this.maw.x, p.y - this.maw.y, p.z - this.maw.z) < 1.9;
-      if (hit) {
+      if (hit && attackClear(L, this.maw, p)) {
         this.caught = true;
         this.state = 'feed';
         this.mgr.events.push({ type: 'catch', source: 'lurker', x: this.pos.x, y: this.pos.y, z: this.pos.z });
@@ -341,7 +391,7 @@ class Lurker {
     }
     _b.set(-fx, -0.1, -fz).normalize();
     c.constrain(_a.x, _a.y, _a.z, _b.x, _b.y, _b.z, 0.08);
-    collideChain(L, c);
+    collideChain(L, c, true);
     c.frames(0, 1, 0);
     this.tailBundle.set(0, c);
     this.tailBundle.upload();
@@ -369,7 +419,7 @@ class Lurker {
     }
     _b.set(fx * 0.3, 0.95, fz * 0.3).normalize();
     st.constrain(_a.x, _a.y, _a.z, _b.x, _b.y, _b.z, 0.05);
-    collideChain(L, st);
+    collideChain(L, st, true);
     st.frames(fx, 0, fz);
     this.fringeBundle.set(0, st);
     st.tip(this.bulb);
@@ -388,7 +438,7 @@ class Lurker {
         ch.p[o + 2] += (nz(q, t * 0.5, 13.5) - 0.5) * w * dt2 * 2;
       }
       ch.constrain(_a.x, _a.y, _a.z, _b.x, _b.y, _b.z, 0.06);
-      collideChain(L, ch);
+      collideChain(L, ch, true);
       ch.frames(fx, 0, fz);
       this.fringeBundle.set(j + 1, ch);
     }

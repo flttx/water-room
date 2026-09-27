@@ -271,7 +271,8 @@ export class Leviathan {
     this.C = [mx + dx * 110, mz + dz * 110];
     this.len = 220;
     this.yEnd = -44;
-    this.yMid = Math.min(-21, p.y - 11);
+    // The upper fins extend more than four metres above the spine; keep them below the -18 m wall bottoms.
+    this.yMid = Math.min(-25, p.y - 11);
     this.u = -10;
     this.near = Infinity;
     this.passed = false;

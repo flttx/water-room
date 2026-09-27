@@ -27,6 +27,7 @@ export class Player {
     this.mode = 'ground'; // ground | air | surface | under | climb
     this.eyeH = STAND_EYE;
     this.crouch = false;
+    this.crouchToggled = false;
     this.sprint = false;
     this.flashlight = false;
     this.breath = BREATH_MAX;
@@ -59,6 +60,7 @@ export class Player {
     this.mode = water ? 'surface' : 'ground';
     this.eyeH = STAND_EYE;
     this.crouch = false;
+    this.crouchToggled = false;
     this.yaw = yaw;
     this.pitch = 0;
     this.breath = BREATH_MAX;
@@ -160,7 +162,8 @@ export class Player {
     const fwdIn = (input.any('KeyW', 'ArrowUp') ? 1 : 0) - (input.any('KeyS', 'ArrowDown') ? 1 : 0);
     const sideIn = (input.any('KeyD', 'ArrowRight') ? 1 : 0) - (input.any('KeyA', 'ArrowLeft') ? 1 : 0);
     const wantSprint = input.any('ShiftLeft', 'ShiftRight');
-    const crouchKey = input.any('KeyC', 'ControlLeft', 'ControlRight');
+    const crouchHeld = input.any('ControlLeft', 'ControlRight');
+    const crouchKey = input.key('KeyC') || crouchHeld;
     const jumpKey = input.key('Space');
     const jumpHit = input.hit('Space');
     if (input.hit('KeyF')) {
@@ -203,7 +206,8 @@ export class Player {
     }
 
     if (this.mode === 'ground' || this.mode === 'air') {
-      this.crouch = crouchKey || (this.crouch && L.ceil(tx, tz) - L.floor(tx, tz) < STAND_EYE + 0.25);
+      if (input.hit('KeyC')) this.crouchToggled = !this.crouchToggled;
+      this.crouch = this.crouchToggled || crouchHeld || (this.crouch && L.ceil(tx, tz) - L.floor(tx, tz) < STAND_EYE + 0.25);
       this.sprint = wantSprint && !this.crouch && fwdIn > 0;
       const targetEye = this.crouch ? CROUCH_EYE : STAND_EYE;
       const prevEye = this.eyeH;
@@ -261,6 +265,7 @@ export class Player {
           this.vel.multiplyScalar(quiet ? 0.3 : 0.5);
           this.emit('splash', { quiet, x: p.x, z: p.z });
           this.crouch = false;
+          this.crouchToggled = false;
           this.eyeH = STAND_EYE;
         }
       }
@@ -277,6 +282,7 @@ export class Player {
       this.wetT = Math.max(0, this.wetT - dt);
     } else if (this.mode === 'surface') {
       this.crouch = false;
+      this.crouchToggled = false;
       this.sprint = wantSprint && moving;
       const spd = this.sprint ? 3.2 : 2.0;
       this.vel.x += (_wish.x * spd - this.vel.x) * Math.min(1, dt * 2.6);
@@ -316,6 +322,7 @@ export class Player {
       }
     } else if (this.mode === 'under') {
       this.crouch = false;
+      this.crouchToggled = false;
       this.sprint = wantSprint && moving;
       const spd = this.sprint ? 3.5 : 2.4;
       // swim along the view direction

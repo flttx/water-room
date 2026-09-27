@@ -121,7 +121,7 @@ export function makeTileTextures(size = 1024) {
         const bev = Math.min(1, (edge - grout) / (cell * 0.12));
         v = tone.v * (0.93 + nn * 0.07) - (1 - bev) * 0.06;
         h = 0.55 + bev * 0.45 + tone.tilt * (lx / cell - 0.5) * 0.2;
-        r = 0.12 + nn * 0.12 + (1 - tone.v) * 0.4;
+        r = 0.3 + nn * 0.12 + (1 - tone.v) * 0.4;
         if (tone.chip) {
           const cx = tone.chipX * cell, cy = tone.chipY * cell;
           const dd = Math.hypot(lx - cx, ly - cy) / cell;

@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { GlowPoints } from './glow.js';
 import { modelSkin, disposeModelSkin } from './tripo.js';
 import { Rig } from './rig.js';
+import { attackClear } from './collision.js';
+import { RigSurface } from './rig-collision.js';
 import { mulberry32 } from '../render/textures.js';
 
 // A thirteen-metre anglerfish lying on the silt of the reservoir basin under the east catwalk, its lure hanging
@@ -46,7 +48,7 @@ export class Angler {
 
     const [tx, tz] = level.reservoir.angler;
     const [cx, cz] = level.worldCenter(tx, tz);
-    this.home = new THREE.Vector3(cx, level.floor(tx, tz) - 0.3, cz);
+    this.home = new THREE.Vector3(cx, level.floor(tx, tz) + 0.15, cz);
     this.homeYaw = Math.PI; // facing north, at the gap in the east catwalk
 
     this.probe = { value: new THREE.Color(0.004, 0.008, 0.01) };
@@ -74,6 +76,8 @@ export class Angler {
     this.from = new THREE.Vector3();
     this.to = new THREE.Vector3();
     this.off = new THREE.Vector3();
+    this.surface = new RigSurface(rig);
+    this.poseGuard = this.surface.guard(level);
     this.reset();
   }
 
@@ -92,6 +96,7 @@ export class Angler {
     this.rig.begin();
     this.rig.pose();
     this.rig.toWorld(this.head, MOUTH, this.mouth);
+    if (!this.poseGuard.reset()) throw new Error('angler resting pose does not fit terrain');
   }
 
   get chasing() { return this.state === 'tense' || this.state === 'lunge'; }
@@ -160,7 +165,13 @@ export class Angler {
     }
     this._move(dt);
     this._place();
-    if (this.group.visible || this.state !== 'idle') this._pose(dt, t);
+    this._pose(dt, t);
+    this.poseGuard.constrain();
+    this.off.copy(this.rig.root.position).sub(this.home);
+    this.pitch = this.rig.root.rotation.x;
+    this.yaw = this.rig.root.rotation.y;
+    this.rig.toWorld(this.head, MOUTH, this.mouth);
+    this.rig.toWorld(this.lure[2], LURE_TIP, this.lureW);
     this._effects(dt, t);
   }
 
@@ -242,6 +253,7 @@ export class Angler {
   }
 
   _catch(player) {
+    if (!attackClear(this.level, this.mouth, player.pos)) return;
     this.caught = true;
     this.events.push({ type: 'catch', source: 'angler' });
     if (this.onCatch) this.onCatch({ source: 'angler', maw: this.mouth.clone(), grab: player.pos.clone() });

@@ -42,8 +42,8 @@ const WaterShader = {
       vec2 p = vWPos.xz;
       vec2 n1 = texture2D(tNormal, p * 0.085 + vec2(uTime * 0.011, uTime * 0.007)).xy * 2.0 - 1.0;
       vec2 n2 = texture2D(tNormal, p * 0.23 - vec2(uTime * 0.016, -uTime * 0.012)).xy * 2.0 - 1.0;
-      vec2 n3 = texture2D(tNormal, p * 0.6 + vec2(-uTime * 0.03, uTime * 0.021)).xy * 2.0 - 1.0;
-      vec2 d = n1 * 0.13 + n2 * 0.09 + n3 * 0.04;
+      vec2 n3 = texture2D(tNormal, p * 0.6 + vec2(-uTime * 0.015, uTime * 0.01)).xy * 2.0 - 1.0;
+      vec2 d = n1 * 0.1 + n2 * 0.06 + n3 * 0.015;
       foam = 0.0;
       for (int i = 0; i < RIPPLE_N; i++) {
         vec4 r = uRipples[i];
@@ -87,12 +87,12 @@ const WaterShader = {
           vec3 H = normalize(L + V);
           float ndh = max(dot(N, H), 0.0);
           float att = 1.0 / (1.0 + ld * ld * 0.02);
-          spec += uLampCol[i].rgb * (pow(ndh, 900.0) * 2.5 + pow(ndh, 240.0) * 0.05) * att;
+          spec += uLampCol[i].rgb * (pow(ndh, 180.0) * 0.3 + pow(ndh, 60.0) * 0.025) * att;
           lit += uLampCol[i].rgb * att;
         }
-        // glints follow the Fresnel term (dim when looking down into the water) and stay below a
-        // couple of units so bloom sparkles instead of fogging the whole frame
-        spec = min(spec * (0.12 + F * 4.0), vec3(1.6));
+        // Broad, softly limited glints avoid bright pinpoints flashing across ripples.
+        spec *= 0.12 + F * 1.4;
+        spec = spec / (vec3(1.0) + spec / 0.65);
         col = min(refl * F * color, vec3(3.0)) + spec + lit * 0.0015 + foam * lit * 0.06;
         a = clamp(F + 0.06 + foam * 0.2, 0.0, 1.0);
         float fa = 1.0 - exp(-uFogDensity * uFogDensity * dist * dist);

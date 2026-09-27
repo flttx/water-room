@@ -88,8 +88,7 @@ export class Director {
     if (act.length >= cap) return;
     const idle = this.hunters.find((h) => !h.active);
     const tile = this._pickTile(p, act);
-    if (idle && tile >= 0) {
-      idle.spawn(tile, player);
+    if (idle && tile >= 0 && idle.spawn(tile, player)) {
       idle.idleT = 0;
       idle.leaveAfter = 40 + this.rand() * 30;
       this.events.push({ type: 'hunterSpawn', source: 'hunter', x: idle.x, y: idle.y, z: idle.z });

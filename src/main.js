@@ -50,7 +50,7 @@ const DEATH_TEXT = {
 
 const HINTS = [
   [2, 'WASD 移动 · 鼠标环顾 · Esc 暂停', 5],
-  [9, '它们靠声音和光找你。按 C 蹲伏，脚步会更轻', 5.5],
+  [9, 'C 切换蹲伏 / 起身，蹲伏时脚步更轻', 5.5],
   [17, '靠近池边按空格攀上窄道；在水面按 C 下潜', 5.5],
 ];
 
@@ -942,8 +942,7 @@ class Game {
     G.uFlDir.value.copy(_fl);
     _v.set(0.18, -0.2, 0).applyQuaternion(camera.quaternion);
     G.uFlPos.value.copy(camera.position).add(_v);
-    const flick = Math.sin(t * 61) * Math.sin(t * 17.3) > 0.985 ? 0.4 : 1;
-    G.uFlOn.value = this.flOn * flick;
+    G.uFlOn.value = this.flOn;
   }
 }
 

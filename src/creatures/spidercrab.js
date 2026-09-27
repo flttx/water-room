@@ -2,6 +2,8 @@ import * as THREE from 'three';
 import { GlowPoints } from './glow.js';
 import { modelSkin, disposeModelSkin } from './tripo.js';
 import { Rig } from './rig.js';
+import { attackClear, PoseGuard } from './collision.js';
+import { RigSurface } from './rig-collision.js';
 import { exposure, sightRange, sight, awarenessRate, AWARE_SUSPICIOUS, AWARE_CHASE } from './senses.js';
 import { DECK_TOP, DECK_BOTTOM } from '../level/level.js';
 import { mulberry32 } from '../render/textures.js';
@@ -111,6 +113,21 @@ export class SpiderCrab {
       this.legs.push(this._leg(rig.leg(rig.bone(hip), rig.bone(knee), V(FORE_TIP, side), V(FORE_HIP, side), V(FORE_KNEE, side)), true, side));
     }
     this._rebind();
+    this.surface = new RigSurface(rig, (node) => {
+      const i = this.legs.findIndex(({ ik }) => node === ik.hip || node === ik.knee || rig.under(node, ik.hip) || rig.under(node, ik.knee));
+      return i + 1;
+    });
+    this.poseGuard = this.surface.guard(level);
+    this.bodyGuard = new PoseGuard([rig.root], () => this.surface.clear(level, 0), () => {
+      rig.root.updateMatrix(); rig.driven.fill(0); rig.pose();
+    }, 12);
+    this.legs.forEach((L, i) => {
+      const { hip, knee } = L.ik;
+      const nodes = rig.nodes.filter((_, n) => n === hip || n === knee || rig.under(n, hip) || rig.under(n, knee));
+      L.guard = new PoseGuard(nodes, () => this.surface.clear(level, i + 1), () => {
+        rig.driven.fill(0); rig.pose();
+      }, S, false);
+    });
 
     this.glow = new GlowPoints(4, { core: 1.1, halo: 0.5 });
     this.group.add(this.glow.points);
@@ -147,6 +164,7 @@ export class SpiderCrab {
       hipW: new THREE.Vector3(), want: new THREE.Vector3(), idle: new THREE.Vector3(),
       foot: new THREE.Vector3(), from: new THREE.Vector3(), to: new THREE.Vector3(),
       swing: -1, dur: 1, peak: 0, prevY: 0, rip: 0, reach: 0, err: 0, pr: 0,
+      safeFoot: new THREE.Vector3(), hasSafeFoot: false,
     };
   }
 
@@ -309,6 +327,9 @@ export class SpiderCrab {
   // ------------------------------------------------------------------ public
 
   reset() {
+    this.poseGuard.ready = false;
+    this.bodyGuard.ready = false;
+    for (const L of this.legs) { L.hasSafeFoot = false; L.guard.ready = false; }
     this.events.length = 0;
     this.state = 'patrol';
     this.stateT = 0;
@@ -323,6 +344,8 @@ export class SpiderCrab {
     this.tapCool = 4;
     this.stabCool = 0;
     this.gaitSlow = 1;
+    this.blockedT = 0;
+    this.retreatT = 0;
     this.rage = 0;
     this.nearK = 0;
     this.spd = 0;
@@ -354,6 +377,8 @@ export class SpiderCrab {
     }
     this._fore(0, 0, null);
     this._pose(0);
+    if (!this.poseGuard.reset() || !this.bodyGuard.reset()) throw new Error('crab initial pose does not fit terrain');
+    for (const L of this.legs) L.guard.reset();
     for (let s = 0; s < 2; s++) this.prevTip[s].copy(this.foreTip[s]);
     this.voice.setState('patrol');
   }
@@ -396,7 +421,40 @@ export class SpiderCrab {
     this._gait(dt, player, whale);
     this._fore(dt, t, player);
     if (this.group.visible || this.stab) {
+      for (let s = 0; s < 2; s++) this.prevTip[s].copy(this.foreTip[s]);
       this._pose(t);
+      const travel = this.surface.clear(this.level) ? (this.poseGuard.reset(), 1) : this.poseGuard.constrain();
+      this._syncPose();
+      if (travel < 1) {
+        this.blockedT += dt;
+        this.vel.multiplyScalar(0.5);
+        for (let i = 0; i < NW; i++) {
+          const L = this.legs[i];
+          this.rig.toWorld(L.ik.knee, L.ik.T0, L.foot);
+          L.safeFoot.copy(L.foot); L.swing = -1;
+        }
+      } else this.blockedT = 0;
+      if (this.blockedT > 0.5) {
+        this.retreatT = 2;
+        this.blockedT = 0;
+        this.patrolWp = this._nextPatrol();
+      }
+      if (this.retreatT > 0) {
+        this.retreatT -= dt;
+        // Back away with the last clear skin pose, then let IK pick fresh footholds.
+        const r = this.rig.root;
+        r.position.x -= Math.sin(this.h) * dt * 1.5;
+        r.position.z -= Math.cos(this.h) * dt * 1.5;
+        this.poseGuard.constrain();
+        this._syncPose();
+        for (let i = 0; i < this.legs.length; i++) {
+          const L = this.legs[i], target = L.fore ? this.foreT[i - NW] : L.foot;
+          this.rig.toWorld(L.ik.knee, L.ik.T0, target);
+          L.safeFoot.copy(target); L.swing = -1; L.guard.reset();
+        }
+        this.bodyGuard.reset();
+      }
+      this._tips();
       this._hit(player);
     }
     this._effects(dt, t, player);
@@ -604,13 +662,20 @@ export class SpiderCrab {
     const r = this.rig.root;
     r.position.set(this.hub.x, this.bob, this.hub.z);
     r.rotation.set(this.roll, this.h - Math.PI / 2, this.pitch, 'YZX');
+    if (this.bodyGuard.ready) { this.bodyGuard.constrain(); this._syncPose(); }
+  }
+
+  _syncPose() {
+    const r = this.rig.root;
+    this.hub.x = r.position.x; this.hub.z = r.position.z; this.bob = r.position.y;
+    this.roll = r.rotation.x; this.h = r.rotation.y + Math.PI / 2; this.pitch = r.rotation.z;
   }
 
   // ------------------------------------------------------------------ legs
 
   _ground(x, z) {
     const f = this.level.floor(Math.floor(x / 2), Math.floor(z / 2));
-    return f > 900 ? 0 : f;
+    return f > 900 ? 0 : f + 0.18;
   }
 
   /** The leg's hip in the world and where its foot wants to be: out along its rest direction, led by the walk. */
@@ -721,7 +786,7 @@ export class SpiderCrab {
       }
       const tx = Math.floor(x / 2), tz = Math.floor(z / 2);
       if (lv.ch(tx, tz) === '=' || lv.solid(tx, tz)) continue;
-      const fy = lv.floor(tx, tz);
+      const fy = lv.floor(tx, tz) + 0.18;
       if (fy > 900) continue;
       if (x > B[0] && x < B[2] && z > B[1] && z < B[3]) continue;
       const reach = Math.hypot(x - hip.x, fy - hip.y, z - hip.z) / L.len;
@@ -736,7 +801,7 @@ export class SpiderCrab {
           if (this._deckNear(x + (hip.x - x) * u, z + (hip.z - z) * u)) s += 6;
         }
       }
-      if (this._pillarOn(x, z, hip.x, hip.z) || this._pillarOn(L.foot.x, L.foot.z, x, z)) s += 40;
+      if (this._pillarOn(x, z, hip.x, hip.z) || this._pillarOn(L.foot.x, L.foot.z, x, z)) continue;
       if (whale && fy < 0) {
         const wc = whale.clearance(x, z);
         if (wc < 4) s += (4 - wc) * 4;
@@ -907,7 +972,12 @@ export class SpiderCrab {
     if (!st || st.phase !== 'strike') return;
     const p = player.pos;
     const shielded = this.level.ch(player.tileX, player.tileZ) === '=' && p.y < DECK_BOTTOM;
-    if (!player.frozen && !shielded && segDist(p, this.prevTip[st.s], this.foreTip[st.s]) < CATCH_R) {
+    const from = this.prevTip[st.s], to = this.foreTip[st.s];
+    _a.subVectors(to, from);
+    const u = clamp(_b.subVectors(p, from).dot(_a) / (_a.lengthSq() || 1), 0, 1);
+    _b.copy(from).addScaledVector(_a, u);
+    if (!player.frozen && !shielded && segDist(p, from, to) < CATCH_R
+      && attackClear(this.level, from, _b) && attackClear(this.level, _b, p)) {
       st.phase = 'feed';
       st.t = 0;
       this.events.push({ type: 'catch', source: 'crab' });
@@ -944,9 +1014,64 @@ export class SpiderCrab {
       rig.bend(b, _q.setFromAxisAngle(Z_AXIS, 0.12 * Math.sin(t * 5 + k * 1.7) + chew * Math.sin(t * 11 + k)));
     });
     rig.pose();
+    for (let i = 0; i < this.legs.length; i++) this._fitLeg(i);
+    for (let i = 0; i < this.legs.length; i++) {
+      const L = this.legs[i];
+      if (!L.guard.ready) continue;
+      // The body has moved since the saved local leg pose. Grounded feet must be
+      // replanted in world space before sweeping an independently moving leg.
+      L.guard._copy(L.guard.goal);
+      L.guard.apply(0);
+      const previousFits = L.guard.clear();
+      L.guard.apply(1);
+      if (!previousFits && L.guard.clear()) { L.guard.reset(); continue; }
+      if (L.guard.constrain() === 1) continue;
+      const target = L.fore ? this.foreT[i - NW] : L.foot;
+      rig.toWorld(L.ik.knee, L.ik.T0, target);
+      L.safeFoot.copy(target);
+      if (!L.fore) L.swing = -1;
+    }
+    // Some imported skin vertices blend across adjacent legs. Recheck those
+    // shared patches after all independent leg sweeps have been resolved.
+    for (let i = 0; i < this.legs.length; i++) this._fitLeg(i);
+    this._tips();
+  }
+
+  /** Try alternate footholds with the complete posed thigh and shin, not just the foot. */
+  _fitLeg(i) {
+    const rig = this.rig, L = this.legs[i], target = L.fore ? this.foreT[i - NW] : L.foot;
+    const clear = () => this.surface.clear(this.level, i + 1);
+    if (clear()) { L.safeFoot.copy(target); L.hasSafeFoot = true; return; }
+    const wanted = target.clone(), hip = L.ik.H0.clone().applyMatrix4(rig.root.matrix);
+    const tryAt = (p) => {
+      const tx = Math.floor(p.x / 2), tz = Math.floor(p.z / 2);
+      if (this.level.solid(tx, tz) || (!L.fore && this.level.deckTop(tx, tz) !== null)) return false;
+      rig.reach(L.ik, _a.copy(p).applyMatrix4(rig.rootInv), L.fore ? 0.9 : 0.45);
+      rig.pose();
+      if (!clear()) return false;
+      target.copy(p); L.safeFoot.copy(p); L.hasSafeFoot = true;
+      if (!L.fore) L.swing = -1;
+      return true;
+    };
+    if (L.hasSafeFoot && tryAt(L.safeFoot.clone())) return;
+    const dx = wanted.x - hip.x, dz = wanted.z - hip.z;
+    for (const factor of [1, 0.85, 0.7, 0.55, 0.4]) for (const angle of [0, 0.2, -0.2, 0.45, -0.45, 0.8, -0.8, 1.2, -1.2]) {
+      const x = hip.x + (dx * Math.cos(angle) - dz * Math.sin(angle)) * factor;
+      const z = hip.z + (dz * Math.cos(angle) + dx * Math.sin(angle)) * factor;
+      for (const lift of L.fore ? [0, 2, 4, 6] : [0]) {
+        const y = L.fore ? Math.max(wanted.y + lift, this._ground(x, z)) : this._ground(x, z);
+        if (tryAt(new THREE.Vector3(x, y, z))) return;
+      }
+    }
+    // The whole-pose guard retains the last valid pose if no foothold is reachable this frame.
+    rig.reach(L.ik, _a.copy(wanted).applyMatrix4(rig.rootInv), L.fore ? 0.9 : 0.45);
+    rig.pose();
+  }
+
+  _tips() {
+    const rig = this.rig;
     for (let s = 0; s < 2; s++) {
       const L = this.legs[NW + s];
-      this.prevTip[s].copy(this.foreTip[s]);
       rig.toWorld(L.ik.knee, L.ik.T0, this.foreTip[s]);
     }
     rig.toWorld(this.bodyBone, MOUTH, this.mouth);

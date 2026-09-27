@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { patchMaterial } from '../render/shaderlib.js';
 import { mulberry32 } from '../render/textures.js';
+import { sphereClear, sphereTravel } from './collision.js';
 
 // ------------------------------------------------------------------ CPU value noise for sculpting
 
@@ -321,29 +322,42 @@ export class Chain {
     this.seg = length / (n - 1);
     this.p = new Float32Array(n * 3);
     this.o = new Float32Array(n * 3);
+    this.previous = new Float32Array(n * 3);
     this.nrm = new Float32Array(n * 3);
     this.r = new Float32Array(n);
+    this.collisionR = new Float32Array(n);
+    this.collisionSafe = new Float32Array(n * 3);
+    this.collisionGoal = new Float32Array(n * 3);
+    this.collisionReady = false;
     this.r0 = r0;
+    this.dt = 1 / 60;
     for (let i = 0; i < n; i++) this.r[i] = r0 + (r1 - r0) * Math.pow(i / (n - 1), taper);
   }
 
   reset(x, y, z, dx, dy, dz) {
+    this.collisionReady = false;
+    this.dt = 1 / 60;
     for (let i = 0; i < this.n; i++) {
       const b = i * 3;
       this.p[b] = this.o[b] = x + dx * this.seg * i;
       this.p[b + 1] = this.o[b + 1] = y + dy * this.seg * i;
       this.p[b + 2] = this.o[b + 2] = z + dz * this.seg * i;
     }
+    this.previous.set(this.p);
   }
 
   /** Verlet step with per-chain damping and a uniform acceleration (buoyancy / gravity). */
   integrate(dt, damp, ax, ay, az) {
+    if (dt <= 0) return;
     const { p, o } = this;
+    this.previous.set(p);
     const dt2 = dt * dt;
+    const drag = Math.pow(damp, dt * 60) * dt / this.dt;
+    this.dt = dt;
     for (let i = 3; i < p.length; i++) {
       const c = i % 3;
       const a = c === 0 ? ax : c === 1 ? ay : az;
-      const v = (p[i] - o[i]) * damp;
+      const v = (p[i] - o[i]) * drag;
       o[i] = p[i];
       p[i] += v + a * dt2;
     }
@@ -352,46 +366,62 @@ export class Chain {
   /** Pin the root, orient the first segment, keep segment lengths and add bending stiffness. */
   constrain(rx, ry, rz, dx, dy, dz, stiff = 0.1, slack = false) {
     const { p, n, seg } = this;
+    const rootK = 1 - Math.pow(0.4, this.dt * 60);
+    const bendK = 1 - Math.pow(1 - stiff, this.dt * 60);
     p[0] = rx; p[1] = ry; p[2] = rz;
-    p[3] += (rx + dx * seg - p[3]) * 0.6;
-    p[4] += (ry + dy * seg - p[4]) * 0.6;
-    p[5] += (rz + dz * seg - p[5]) * 0.6;
+    this.pull(1, rx + dx * seg, ry + dy * seg, rz + dz * seg, rootK);
     for (let i = 2; i < n && stiff > 0; i++) {
       const b = i * 3, a = b - 3, z = b - 6;
-      for (let c = 0; c < 3; c++) p[b + c] += (2 * p[a + c] - p[z + c] - p[b + c]) * stiff;
+      this.pull(i, 2 * p[a] - p[z], 2 * p[a + 1] - p[z + 1], 2 * p[a + 2] - p[z + 2], bendK);
     }
+    this.constrainLengths(slack);
+  }
+
+  /** Keep the root pinned while restoring lengths after collision corrections. */
+  constrainLengths(slack = false) {
+    const { p, o, n, seg } = this;
     for (let i = 1; i < n; i++) {
       const b = i * 3, a = b - 3;
       const ex = p[b] - p[a], ey = p[b + 1] - p[a + 1], ez = p[b + 2] - p[a + 2];
       const d = Math.hypot(ex, ey, ez) || 1e-6;
       if (slack && d < seg) continue;
       const k = seg / d;
-      p[b] = p[a] + ex * k;
-      p[b + 1] = p[a + 1] + ey * k;
-      p[b + 2] = p[a + 2] + ez * k;
+      const cx = ex * (k - 1), cy = ey * (k - 1), cz = ez * (k - 1);
+      p[b] += cx; p[b + 1] += cy; p[b + 2] += cz;
+      o[b] += cx; o[b + 1] += cy; o[b + 2] += cz;
     }
   }
 
   pull(i, x, y, z, k) {
     const b = i * 3;
-    this.p[b] += (x - this.p[b]) * k;
-    this.p[b + 1] += (y - this.p[b + 1]) * k;
-    this.p[b + 2] += (z - this.p[b + 2]) * k;
+    const dx = (x - this.p[b]) * k, dy = (y - this.p[b + 1]) * k, dz = (z - this.p[b + 2]) * k;
+    // Following a pose is a positional correction, not a force for the next frame.
+    this.p[b] += dx; this.p[b + 1] += dy; this.p[b + 2] += dz;
+    this.o[b] += dx; this.o[b + 1] += dy; this.o[b + 2] += dz;
   }
 
   /** Parallel-transported frame normals starting from a reference up vector. */
   frames(ux, uy, uz) {
     const { p, nrm, n } = this;
     let nx = ux, ny = uy, nz = uz;
+    let lastTx = 0, lastTy = -1, lastTz = 0;
     for (let i = 0; i < n; i++) {
       const a = Math.max(0, i - 1) * 3, b = Math.min(n - 1, i + 1) * 3;
       let tx = p[b] - p[a], ty = p[b + 1] - p[a + 1], tz = p[b + 2] - p[a + 2];
-      const tl = Math.hypot(tx, ty, tz) || 1;
-      tx /= tl; ty /= tl; tz /= tl;
+      const tl = Math.hypot(tx, ty, tz);
+      if (tl > 1e-6) { tx /= tl; ty /= tl; tz /= tl; }
+      else { tx = lastTx; ty = lastTy; tz = lastTz; }
+      lastTx = tx; lastTy = ty; lastTz = tz;
       const d = nx * tx + ny * ty + nz * tz;
       nx -= tx * d; ny -= ty * d; nz -= tz * d;
       let nl = Math.hypot(nx, ny, nz);
-      if (nl < 1e-4) { nx = -tz; ny = 0; nz = tx; nl = Math.hypot(nx, ny, nz) || 1; }
+      if (nl < 1e-4) {
+        if (Math.abs(ty) > 0.99) { nx = 1; ny = 0; nz = 0; }
+        else { nx = -tz; ny = 0; nz = tx; }
+        const dot = nx * tx + ny * ty + nz * tz;
+        nx -= tx * dot; ny -= ty * dot; nz -= tz * dot;
+        nl = Math.hypot(nx, ny, nz);
+      }
       nx /= nl; ny /= nl; nz /= nl;
       nrm[i * 3] = nx; nrm[i * 3 + 1] = ny; nrm[i * 3 + 2] = nz;
     }
@@ -401,31 +431,157 @@ export class Chain {
   point(i, out) { const b = i * 3; return out.set(this.p[b], this.p[b + 1], this.p[b + 2]); }
 }
 
-/** Keep a chain out of pillars and walls, above floors (dry decks and pool bottoms) and under ceilings. */
-export function collideChain(level, c) {
-  const L = level, p = c.p;
-  for (let i = 1; i < c.n; i++) {
-    const o = i * 3;
-    let tx = Math.floor(p[o] / 2), tz = Math.floor(p[o + 2] / 2);
-    if (L.solid(tx, tz) && p[o + 1] < L.ceil(tx, tz) + 50) {
-      const fx = p[o] / 2 - tx, fz = p[o + 2] / 2 - tz;
-      const opts = [[fx, -1, 0], [1 - fx, 1, 0], [fz, 0, -1], [1 - fz, 0, 1]];
-      opts.sort((m, n) => m[0] - n[0]);
-      for (const [dd, sx, sz] of opts) {
-        if (L.solid(tx + sx, tz + sz)) continue;
-        p[o] += sx * (dd * 2 + 0.05);
-        p[o + 2] += sz * (dd * 2 + 0.05);
-        break;
+/** Protect spans as well when the creature's body collider guarantees an unobstructed root. */
+export function collideChain(level, c, protectSpans = false, maxSpeed = Infinity) {
+  const p = c.p, old = c.o;
+  // A submerged point beside a deck must leave through its side, rather than teleport to
+  // the deck's floor. Alternate contacts and lengths so the skin cannot stretch apart.
+  for (let pass = 0; pass < 4; pass++) {
+    for (let i = 1; i < c.n; i++) {
+      const b = i * 3, x = p[b], y = p[b + 1], z = p[b + 2];
+      const tx = Math.floor(x / 2), tz = Math.floor(z / 2), r = c.r[i] * 0.9;
+      if (level.openBelow !== undefined && y + r < level.openBelow) continue;
+      if (!level.solid(tx, tz) && y >= level.floor(tx, tz) + r && y <= level.ceil(tx, tz) - r) continue;
+      let best = Infinity, bx = x, by = y, bz = z;
+      for (let dz = -1; dz <= 1; dz++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = tx + dx, nz = tz + dz;
+          if (level.solid(nx, nz)) continue;
+          const floor = level.floor(nx, nz) + r, ceil = level.ceil(nx, nz) - r;
+          if (floor > ceil) continue;
+          const cx = dx === 0 ? x : Math.max(nx * 2 + 0.05, Math.min(nx * 2 + 1.95, x));
+          const cz = dz === 0 ? z : Math.max(nz * 2 + 0.05, Math.min(nz * 2 + 1.95, z));
+          const cy = Math.max(floor, Math.min(ceil, y));
+          const d = (cx - x) ** 2 + (cy - y) ** 2 + (cz - z) ** 2;
+          if (d < best) { best = d; bx = cx; by = cy; bz = cz; }
+        }
       }
-      tx = Math.floor(p[o] / 2);
-      tz = Math.floor(p[o + 2] / 2);
+      if (!Number.isFinite(best)) continue;
+      // An attached root can be inside terrain while the creature surfaces. Resolve that
+      // gradually, without injecting the projection displacement into Verlet velocity.
+      const k = Math.min(1, c.seg * c.dt * 2 / (Math.sqrt(best) || 1));
+      const ex = (bx - x) * k, ey = (by - y) * k, ez = (bz - z) * k;
+      p[b] += ex; p[b + 1] += ey; p[b + 2] += ez;
+      old[b] += ex; old[b + 1] += ey; old[b + 2] += ez;
+      const len2 = ex * ex + ey * ey + ez * ez;
+      const inward = ((p[b] - old[b]) * ex + (p[b + 1] - old[b + 1]) * ey + (p[b + 2] - old[b + 2]) * ez) / (len2 || 1);
+      if (inward < 0) {
+        old[b] += ex * inward; old[b + 1] += ey * inward; old[b + 2] += ez * inward;
+      }
     }
-    const r = c.r[i] * 0.9;
-    const f = L.floor(tx, tz);
-    if (f < 50 && p[o + 1] < f + r) p[o + 1] = f + r;
-    const ce = L.ceil(tx, tz);
-    if (ce > -50 && p[o + 1] > ce - r) p[o + 1] = ce - r;
+    c.constrainLengths();
   }
+  if (!protectSpans) return;
+  // Keep both the skin and the spans between nodes outside terrain. Length restoration
+  // must not pull a limb back through a wall. A blocked span can fold/compress against it.
+  // The extra margin covers the spline's small overshoot between its control points.
+  let radius = 0;
+  for (let i = c.n - 1; i >= 0; i--) {
+    radius = Math.max(radius, c.r[i]);
+    c.collisionR[i] = radius + 0.04 + c.seg * 0.125;
+  }
+  for (let i = 1; i < c.n; i++) {
+    const b = i * 3, a = b - 3, r = c.collisionR[i - 1];
+    if (!sphereClear(level, p[a], p[a + 1], p[a + 2], r)) continue;
+    const dx = p[b] - p[a], dy = p[b + 1] - p[a + 1], dz = p[b + 2] - p[a + 2];
+    const lengthK = Math.min(1, c.seg / (Math.hypot(dx, dy, dz) || 1));
+    const x = p[a] + dx * lengthK, y = p[a + 1] + dy * lengthK, z = p[a + 2] + dz * lengthK;
+    const travel = sphereTravel(level, p[a], p[a + 1], p[a + 2], x, y, z, r);
+    const k = travel * lengthK;
+    let nx = p[a] + dx * k, ny = p[a + 1] + dy * k, nz = p[a + 2] + dz * k;
+    if (travel < 1) {
+      // Retain the last clear bend around a corner instead of collapsing the entire tip
+      // toward the root when the animated target crosses to the other side of a wall.
+      const prev = c.previous;
+      const px = prev[b] - p[a], py = prev[b + 1] - p[a + 1], pz = prev[b + 2] - p[a + 2];
+      const reach = Math.min(1, c.seg / (Math.hypot(px, py, pz) || 1));
+      const keep = sphereTravel(level, p[a], p[a + 1], p[a + 2], p[a] + px * reach, p[a + 1] + py * reach, p[a + 2] + pz * reach, r) * reach;
+      const ax = p[a] + px * keep, ay = p[a + 1] + py * keep, az = p[a + 2] + pz * keep;
+      if (Math.hypot(ax - prev[b], ay - prev[b + 1], az - prev[b + 2]) < Math.hypot(nx - prev[b], ny - prev[b + 1], nz - prev[b + 2])) {
+        nx = ax; ny = ay; nz = az;
+      }
+    }
+    const ex = nx - p[b], ey = ny - p[b + 1], ez = nz - p[b + 2];
+    p[b] += ex; p[b + 1] += ey; p[b + 2] += ez;
+    old[b] += ex; old[b + 1] += ey; old[b + 2] += ez;
+  }
+  if (Number.isFinite(maxSpeed)) smoothChainContact(level, c, maxSpeed);
+}
+
+/** Sweep the entire last clear curve toward the corrected pose. This prevents a
+ * long tentacle from snapping back to its root when a bend meets a pillar. */
+function smoothChainContact(level, c, maxSpeed) {
+  const { p, o, collisionSafe: safe, collisionGoal: goal } = c;
+  const clear = () => {
+    for (let i = 1; i < c.n; i++) {
+      const b = i * 3, a = b - 3;
+      if (sphereTravel(level, p[a], p[a + 1], p[a + 2], p[b], p[b + 1], p[b + 2], c.collisionR[i - 1]) < 1) return false;
+    }
+    return true;
+  };
+  if (!c.collisionReady) {
+    c.collisionReady = clear();
+    if (c.collisionReady) safe.set(p);
+    return;
+  }
+  goal.set(p);
+  let distance = 0;
+  for (let b = 0; b < p.length; b += 3) distance = Math.max(distance, Math.hypot(goal[b] - safe[b], goal[b + 1] - safe[b + 1], goal[b + 2] - safe[b + 2]));
+  const limit = Math.min(1, maxSpeed * c.dt / (distance || 1));
+  const apply = (k) => { for (let b = 0; b < p.length; b++) p[b] = safe[b] + (goal[b] - safe[b]) * k; };
+  const steps = Math.max(1, Math.ceil(distance * limit / 0.12));
+  let accepted = 0;
+  for (let i = 1; i <= steps; i++) {
+    const k = limit * i / steps;
+    apply(k);
+    if (clear()) { accepted = k; continue; }
+    let blocked = k;
+    for (let j = 0; j < 8; j++) {
+      const mid = (accepted + blocked) / 2;
+      apply(mid);
+      if (clear()) accepted = mid; else blocked = mid;
+    }
+    break;
+  }
+  apply(accepted);
+  if (accepted < limit) {
+    // A single contact must not pin every other node. Relax the clear sections
+    // independently so the bend can retract around the obstacle over later frames.
+    const budget = maxSpeed * c.dt;
+    for (let pass = 0; pass < 2; pass++) for (let i = c.n - 1; i >= 0; i--) {
+      const b = i * 3, x = p[b], y = p[b + 1], z = p[b + 2];
+      const remaining = Math.max(0, budget - Math.hypot(x - safe[b], y - safe[b + 1], z - safe[b + 2]));
+      const k = Math.min(1, remaining / (Math.hypot(goal[b] - x, goal[b + 1] - y, goal[b + 2] - z) || 1));
+      let dx = (goal[b] - x) * k, dy = (goal[b + 1] - y) * k, dz = (goal[b + 2] - z) * k;
+      const localClear = (u) => {
+        p[b] = x + dx * u; p[b + 1] = y + dy * u; p[b + 2] = z + dz * u;
+        if (sphereTravel(level, x, y, z, p[b], p[b + 1], p[b + 2], c.collisionR[Math.max(0, i - 1)]) < 1) return false;
+        for (const j of [i - 1, i]) {
+          if (j < 0 || j >= c.n - 1) continue;
+          const a = j * 3, e = a + 3;
+          if (Math.hypot(p[e] - p[a], p[e + 1] - p[a + 1], p[e + 2] - p[a + 2]) > c.seg * 1.00001) return false;
+          if (sphereTravel(level, p[a], p[a + 1], p[a + 2], p[e], p[e + 1], p[e + 2], c.collisionR[j]) < 1) return false;
+        }
+        return true;
+      };
+      let lo = 0, hi = 1;
+      if (localClear(1)) lo = 1;
+      else for (let j = 0; j < 8; j++) { const u = (lo + hi) / 2; if (localClear(u)) lo = u; else hi = u; }
+      if (lo < 0.1 && i > 0) {
+        // When the desired bend is around the far side of a corner, retract
+        // along the existing clear span before extending toward it again.
+        const a = b - 3, d = Math.hypot(p[a] - x, p[a + 1] - y, p[a + 2] - z);
+        const retract = Math.min(1, remaining / (d || 1));
+        dx = (p[a] - x) * retract; dy = (p[a + 1] - y) * retract; dz = (p[a + 2] - z) * retract;
+        lo = 0; hi = 1;
+        if (localClear(1)) lo = 1;
+        else for (let j = 0; j < 8; j++) { const u = (lo + hi) / 2; if (localClear(u)) lo = u; else hi = u; }
+      }
+      localClear(lo);
+    }
+  }
+  for (let b = 0; b < p.length; b++) o[b] += p[b] - goal[b];
+  safe.set(p);
 }
 
 // ------------------------------------------------------------------ tentacle bundles

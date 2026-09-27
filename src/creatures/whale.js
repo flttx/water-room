@@ -3,6 +3,8 @@ import { Chain } from './flesh.js';
 import { GlowPoints } from './glow.js';
 import { modelSkin, disposeModelSkin } from './tripo.js';
 import { Rig, chainFrame } from './rig.js';
+import { attackClear, moveSphere } from './collision.js';
+import { RigSurface } from './rig-collision.js';
 import { mulberry32 } from '../render/textures.js';
 
 // A dead whale that never stopped swimming. Twenty-eight metres of grey, peeling carcass circles the reservoir
@@ -23,9 +25,9 @@ const MOUTH = new THREE.Vector3(0, 0.09, 0.455);
 const PROFILE = [1.6, 2.4, 2.6, 2.5, 2.1, 1.6, 1.0, 0.6, 0.45];
 const SPEED = { drift: 2.6, return: 3, suspicious: 3.2, hunt: 5.5, feed: 1.2 };
 const TURN = { drift: 0.5, return: 0.55, suspicious: 0.6, hunt: 0.85, feed: 0.3 };
-const CRUISE_Y = -6.3;
-const Y_MIN = -7;
-const Y_MAX = -1.8;
+const CRUISE_Y = -5;
+const Y_MIN = -5.2;
+const Y_MAX = -3;
 const LOOK = 8;
 const CATCH_R = 4.2;
 const GLOW_COL = [0.4, 1.0, 0.7];
@@ -125,6 +127,12 @@ export class Whale {
     this.mouth = new THREE.Vector3();
     this.focus = new THREE.Vector3();
     this.inited = false;
+    this.surface = new RigSurface(rig);
+    this.poseGuard = this.surface.guard(level);
+    this.previousHead = new THREE.Vector3();
+    this.previousChain = new Float32Array(this.chain.p.length);
+    this.previousTrail = new Float32Array(this.trail.length);
+    this.blockedT = 0;
     this.reset(true);
   }
 
@@ -161,8 +169,8 @@ export class Whale {
     this.caught = false;
     this.touchT = 0;
     this.nearK = 0;
-    this.phase = 0;
     if (full || !this.inited) {
+      this.phase = 0;
       this.inited = true;
       this.u = this.routeLen * 0.62;
       const [x, z, tx, tz] = this._pathAt(this.u, [0, 0, 0, 0]);
@@ -177,8 +185,14 @@ export class Whale {
     } else {
       this.u = this._nearestU(this.head.x, this.head.z, null);
       this.state = 'return';
+      // Respawning resets awareness, while preserving the last collision-safe body pose.
+      this.voice.setState('patrol');
+      return;
     }
     this.voice.setState('patrol');
+    this._layChain();
+    this._pose(0);
+    if (!this.poseGuard.reset()) throw new Error('whale initial pose does not fit terrain');
   }
 
   get chasing() { return this.state === 'hunt' || this.state === 'feed'; }
@@ -220,11 +234,24 @@ export class Whale {
     const far = Math.hypot(p.x - this.head.x, p.z - this.head.z);
     this.group.visible = far < 110;
     this._think(dt, player);
+    this.previousHead.copy(this.head);
+    this.previousChain.set(this.chain.p);
+    this.previousTrail.set(this.trail);
     this._swim(dt, t);
     this._trailPush();
     this._layChain(dt);
-    if (this.group.visible) this._pose(t);
-    else this.rig.toWorld(this.skull, MOUTH, this.mouth);
+    this._pose(t);
+    const travel = this.poseGuard.constrain();
+    if (travel < 1) {
+      this.head.lerpVectors(this.previousHead, this.head, travel);
+      this.trail.set(this.previousTrail);
+      this._trailPush();
+      for (let i = 0; i < this.chain.p.length; i++) this.chain.p[i] = this.previousChain[i] + (this.chain.p[i] - this.previousChain[i]) * travel;
+      this.chain.frames(0, 1, 0);
+      this.blockedT = 1.5;
+      this.spd *= 0.9;
+    }
+    this.rig.toWorld(this.skull, MOUTH, this.mouth);
     this._contact(dt, player);
     this._effects(dt, t, player);
   }
@@ -301,6 +328,12 @@ export class Whale {
       ty = CRUISE_Y + 0.5 * Math.sin(t * 0.09);
     }
     ty = clamp(ty, Y_MIN, Y_MAX);
+    if (this.blockedT > 0) {
+      this.blockedT -= dt;
+      // Give the trailing body room to clear the obstacle before approaching the target again.
+      const q = this._pathAt(this.u + LOOK * 2, [0, 0, 0, 0]);
+      tx = q[0]; tz = q[1]; ty = CRUISE_Y;
+    }
     let wx = tx - h.x, wz = tz - h.z;
     const wl = Math.hypot(wx, wz) || 1;
     wx /= wl; wz /= wl;
@@ -395,7 +428,10 @@ export class Whale {
       const d = Math.hypot(dx, dy, dz), r = c.r[i] + 0.45;
       if (d >= r || d < 1e-4) continue;
       const k = (r - d) / d;
-      p.x += dx * k; p.y = Math.min(p.y + dy * k, 0.26); p.z += dz * k;
+      _a.copy(p);
+      _b.set(p.x + dx * k, Math.min(p.y + dy * k, 0.26), p.z + dz * k);
+      moveSphere(this.level, _a, _b, 0.3);
+      p.copy(_b);
       player.vel.x += (dx / d) * 3 * dt; player.vel.z += (dz / d) * 3 * dt;
       player.shake = Math.max(player.shake, 0.35);
       // it feels you brush past
@@ -415,6 +451,7 @@ export class Whale {
   }
 
   _catch(player) {
+    if (!attackClear(this.level, this.mouth, player.pos)) return;
     this.caught = true;
     this._setState('feed');
     this.events.push({ type: 'catch', source: 'whale' });

@@ -84,6 +84,7 @@ export class Rig {
     });
     this.rootInv = new THREE.Matrix4();
     this.rootInvQ = new THREE.Quaternion();
+    this.poseVersion = 0;
   }
 
   get scale() { return this.root.scale.x; }
@@ -131,6 +132,7 @@ export class Rig {
 
   /** Resolve the hierarchy: driven bones get their locals from the parent's current pose. */
   pose() {
+    this.poseVersion++;
     const n = this.nodes.length;
     for (let i = 0; i < n; i++) {
       const o = this.nodes[i], p = this.parent[i], cur = this.cur[i];
@@ -139,6 +141,10 @@ export class Rig {
         if (p < 0) _m.copy(cur);
         else _m.copy(this.cur[p]).invert().multiply(cur);
         _m.decompose(o.position, o.quaternion, o.scale);
+        // Collision queries and attachments must use the same decomposed local transform as GPU skinning.
+        _m.compose(o.position, o.quaternion, o.scale);
+        if (p < 0) cur.copy(_m);
+        else cur.multiplyMatrices(this.cur[p], _m);
       } else {
         _m.compose(o.position, o.quaternion, o.scale);
         if (p < 0) cur.copy(_m);

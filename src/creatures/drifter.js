@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { G, GLSL_COMMON } from '../render/shaderlib.js';
 import { makeNoise3 } from './flesh.js';
 import { GlowPoints, ADD_MEDIUM } from './glow.js';
+import { attackClear, fitSphere, sphereTravel } from './collision.js';
 import { mulberry32 } from '../render/textures.js';
 import { DRIFT_ROUTE } from '../level/mapdata.js';
 
@@ -293,9 +294,13 @@ export class Drifter {
       this._sample(this.s - i * this.spacing, smp);
       const q = i * 0.37;
       const lat = (nz(q, t * 0.12, 3.3) - 0.5) * 1.2 * this.scale;
-      const x = smp[0] - smp[3] * lat, z = smp[1] + smp[2] * lat;
+      let x = smp[0] - smp[3] * lat, z = smp[1] + smp[2] * lat;
       const pulse = Math.sin(t * (2.2 + this.agitated * 5) - i * 0.55);
-      const y = (-0.75 - (i < 3 ? 0 : 0.25)) * this.scale + pulse * 0.08 + (nz(q, t * 0.2, 9.1) - 0.5) * 0.3;
+      let y = (-0.75 - (i < 3 ? 0 : 0.25)) * this.scale + pulse * 0.08 + (nz(q, t * 0.2, 9.1) - 0.5) * 0.3;
+      // Include the bell's tilted, pulsating cap, rather than only its centre.
+      _p.set(x, y, z);
+      fitSphere(L, _p, this.bellSize(i) * 0.9);
+      x = _p.x; y = _p.y; z = _p.z;
       this.bellPos[i * 3] = x;
       this.bellPos[i * 3 + 1] = y;
       this.bellPos[i * 3 + 2] = z;
@@ -357,9 +362,8 @@ export class Drifter {
       const dx = this.bellDir[i * 2], dz = this.bellDir[i * 2 + 1];
       const rx = dz, rz = -dx;
       const fl = this.flash[i];
-      const fy = L.floor(Math.floor(x0 / 2), Math.floor(z0 / 2)) + 0.35;
       const test = checkSting && Math.hypot(x0 - p.x, z0 - p.z) < 3 + st.len * 0.5;
-      let px = 0, py = 0, pz = 0;
+      let px = x0, py = y0 + 0.1, pz = z0;
       for (let b = 0; b < BEADS; b++) {
         const u = b / (BEADS - 1);
         const d = 0.2 + u * st.len;
@@ -367,9 +371,12 @@ export class Drifter {
         const w1 = (nz(st.ph, t * 0.25, u * 1.5) - 0.5) * 2 * sway;
         const w2 = (nz(st.ph + 7, t * 0.25, u * 1.5) - 0.5) * 2 * sway;
         const trail = -d * (0.22 + this.agitated * 0.3);
-        const x = x0 + rx * (st.side * (1 + u * 0.8) + w1) + dx * (trail + st.along);
-        const z = z0 + rz * (st.side * (1 + u * 0.8) + w1) + dz * (trail + st.along);
-        const y = Math.max(fy, y0 - d * 0.95 + w2 * 0.3);
+        let x = x0 + rx * (st.side * (1 + u * 0.8) + w1) + dx * (trail + st.along);
+        let z = z0 + rz * (st.side * (1 + u * 0.8) + w1) + dz * (trail + st.along);
+        const fy = L.floor(Math.floor(x / 2), Math.floor(z / 2)) + 0.12;
+        let y = Math.max(fy, y0 - d * 0.95 + w2 * 0.3);
+        const clear = sphereTravel(L, px, py, pz, x, y, z, 0.08);
+        x = px + (x - px) * clear; y = py + (y - py) * clear; z = pz + (z - pz) * clear;
         const bi = (j * BEADS + b) * 3;
         this.beads[bi] = x;
         this.beads[bi + 1] = y;
@@ -393,11 +400,12 @@ export class Drifter {
     }
     // the stem joining the bells
     for (let i = 0; i < this.n - 1; i++) {
-      for (const k of [i, i + 1]) {
-        lp[o++] = this.bellPos[k * 3];
-        lp[o++] = this.bellPos[k * 3 + 1] + 0.3;
-        lp[o++] = this.bellPos[k * 3 + 2];
-      }
+      const a = i * 3, b = a + 3, p = this.bellPos;
+      const k = sphereTravel(L, p[a], p[a + 1] + 0.3, p[a + 2], p[b], p[b + 1] + 0.3, p[b + 2], 0.03);
+      lp[o++] = p[a]; lp[o++] = p[a + 1] + 0.3; lp[o++] = p[a + 2];
+      lp[o++] = p[a] + (p[b] - p[a]) * k;
+      lp[o++] = p[a + 1] + 0.3 + (p[b + 1] - p[a + 1]) * k;
+      lp[o++] = p[a + 2] + (p[b + 2] - p[a + 2]) * k;
     }
     this.linePos.needsUpdate = true;
     this.glow.upload(g);
@@ -420,6 +428,7 @@ export class Drifter {
 
   _sting(player, x, y, z) {
     const p = player.pos;
+    if (!attackClear(this.level, _p.set(x, y, z), p)) return;
     this.stingCool = 1.4;
     this.agitated = 1;
     // find the bell this bead hangs from and start an alarm flash there

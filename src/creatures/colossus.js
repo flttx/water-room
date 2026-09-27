@@ -3,6 +3,7 @@ import { sculptBody, EyeSet, buildTeeth, layoutEyes, makeSkinMaterial, TentacleB
 import { pointsMaterial } from '../render/fx.js';
 import { mulberry32 } from '../render/textures.js';
 import { DECK_Y } from '../level/level.js';
+import { attackClear, abyssTerrain, PoseGuard, sphereClear } from './collision.js';
 import { ABYSS } from '../level/mapdata.js';
 import { exposure, sight, awarenessRate, AWARE_SUSPICIOUS, AWARE_CHASE } from './senses.js';
 import { modelSkin, disposeModelSkin, castOnto } from './tripo.js';
@@ -11,6 +12,7 @@ import { modelSkin, disposeModelSkin, castOnto } from './tripo.js';
 // watches the hall and hammers anything it sees with arms as thick as pillars.
 
 const DORMANT_Y = -34;
+const _upright = new THREE.Quaternion();
 const WATCH_Y = 5.2;
 const RISE_TIME = 11;
 const SINK_TIME = 9;
@@ -19,8 +21,8 @@ const CX = ABYSS.x0 + ABYSS.x1 + 1, CZ = ABYSS.z0 + ABYSS.z1 + 1;
 const X_MIN = CX - 5, X_MAX = CX + 5;
 // Two resting places either side of the island; yaw 0 faces +z
 const ZONES = [
-  { z: CZ - 8.5, yaw: 0 },
-  { z: CZ + 8.5, yaw: Math.PI },
+  { z: CZ - 9.2, yaw: 0 },
+  { z: CZ + 9.2, yaw: Math.PI },
 ];
 const REGION = { x0: ABYSS.x0 - 1, z0: ABYSS.z0 - 1, x1: ABYSS.x1 + 1, z1: ABYSS.z1 + 3 };
 
@@ -240,6 +242,12 @@ export class Colossus {
     this.headLocal = new THREE.Matrix4();
     this._buildBody(model);
     this._buildLimbs();
+    this.terrain = abyssTerrain(level);
+    this.bodyGuard = new PoseGuard([this.root, this.headPivot, this.headMesh, ...(this.trunkMesh ? [this.trunkMesh] : [])],
+      () => this._bodyClear(), () => {
+        this.root.updateMatrixWorld(true);
+        this.headLocal.multiplyMatrices(this.headPivot.matrix, this.headMesh.matrix);
+      }, 18);
     this.mist = makeMist(46);
     this.group.add(this.mist);
     this.lamp = lampSys.add({ type: 'creature', x: 0, y: -500, z: 0, color: [1, 0.42, 0.1], intensity: 0, range: 18 });
@@ -400,6 +408,7 @@ export class Colossus {
   // ------------------------------------------------------------------ public
 
   reset() {
+    this.bodyGuard.ready = false;
     this.state = 'dormant';
     this.t = 0;
     this.zone = ZONES[1];
@@ -424,6 +433,15 @@ export class Colossus {
     this.caught = false;
     this.events.length = 0;
     this._place(0, 0);
+    this._resetLimbs();
+    if (!this.tripo) {
+      this.headEyes.setAllOpen(0.1);
+      this.trunkEyes.setAllOpen(0.25);
+    }
+    this.bodyGuard.reset();
+  }
+
+  _resetLimbs() {
     for (const a of this.arms) {
       a.mode = 'sink';
       a.cool = 0;
@@ -433,10 +451,6 @@ export class Colossus {
     for (const f of [...this.feelers, ...this.beard]) {
       this._headPoint(f.rootLocal, f.w, _a);
       f.chain.reset(_a.x, _a.y, _a.z, 0, -1, 0);
-    }
-    if (!this.tripo) {
-      this.headEyes.setAllOpen(0.1);
-      this.trunkEyes.setAllOpen(0.25);
     }
   }
 
@@ -551,6 +565,11 @@ export class Colossus {
         this.yaw = Math.atan2(player.pos.x - this.x, player.pos.z - this.z);
         this.scanYaw = this.yaw;
         this.y = DORMANT_Y;
+        // Relocate the complete sleeping creature in the open cavern before it surfaces.
+        this.bodyGuard.ready = false;
+        this._place(0, t);
+        this._resetLimbs();
+        this.bodyGuard.reset();
         this._wake(reveal);
       }
       return;
@@ -564,10 +583,11 @@ export class Colossus {
       return;
     }
     if (this.state === 'sinking') {
+      const submerged = this.y <= DORMANT_Y + 0.2;
       const p = Math.min(1, this.t / SINK_TIME);
       this.y = WATCH_Y + (DORMANT_Y - WATCH_Y) * smooth(p * p);
       this.awareness = Math.max(0, this.awareness - dt * 0.3);
-      if (p >= 1) {
+      if (p >= 1 && submerged) {
         this.state = 'dormant';
         this.sleepT = 25 + this.rand() * 20;
         this.abyssT = 0;
@@ -692,6 +712,64 @@ export class Colossus {
     if (this.trunkMesh) this.trunkMesh.rotation.set(Math.sin(t * 0.13) * 0.03, 0, Math.sin(t * 0.2) * 0.03);
     this.root.updateMatrixWorld(true);
     this.headLocal.multiplyMatrices(this.headPivot.matrix, this.headMesh.matrix);
+    if (this.bodyGuard?.ready) {
+      const wanted = this.root.position.clone();
+      if (this.bodyGuard.constrain() < 1) {
+        // Straighten in the shaft before continuing to rise. A blocked looking
+        // turn must not lock vertical movement at the wall's lower edge.
+        const k = Math.min(1, dt * 3);
+        this.root.rotation.y += Math.atan2(Math.sin(this.zone.yaw - this.root.rotation.y), Math.cos(this.zone.yaw - this.root.rotation.y)) * k;
+        this.headPivot.quaternion.slerp(_upright, k);
+        this.bodyGuard.constrain();
+        this.root.position.copy(wanted);
+        this.bodyGuard.constrain();
+      }
+      this.x = this.root.position.x; this.y = this.root.position.y; this.z = this.root.position.z;
+      this.yaw = this.root.rotation.y;
+      this.pitch = this.headPivot.rotation.x - Math.sin(t * 0.31) * 0.025;
+    }
+  }
+
+  _bodyClear() {
+    // Limbs share their body's sweep budget, so a blocked tentacle cannot be left
+    // behind while its attachment rises or turns through the next pose.
+    for (const arm of this.arms) {
+      _a.copy(arm.rootLocal).applyMatrix4(this.root.matrixWorld);
+      if (arm.chain.collisionReady && _a.distanceTo(_b.fromArray(arm.chain.p)) > 0.2) return false;
+    }
+    for (const limb of [...this.feelers, ...this.beard]) {
+      this._headPoint(limb.rootLocal, limb.w, _a);
+      if (limb.chain.collisionReady && _a.distanceTo(_b.fromArray(limb.chain.p)) > 0.12) return false;
+    }
+    if (this.tripo) {
+      const pos = this.bodyMesh.geometry.attributes.position;
+      for (let i = 0; i < pos.count; i++) {
+        _a.fromBufferAttribute(pos, i);
+        const k = Math.max(0, Math.min(1, (_a.y + 8) / 6)), w = k * k * (3 - 2 * k);
+        this._headPoint(_a, w, _b);
+        // Include the shader's 6 cm breathing displacement.
+        if (!sphereClear(this.terrain, _b.x, _b.y, _b.z, 0.09)) return false;
+      }
+    } else {
+      for (const mesh of [this.headMesh, this.trunkMesh]) {
+        const pos = mesh.geometry.attributes.position;
+        for (let i = 0; i < pos.count; i++) {
+          _a.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld);
+          if (!sphereClear(this.terrain, _a.x, _a.y, _a.z, 0.04)) return false;
+        }
+      }
+    }
+    for (const arm of this.arms) {
+      _a.copy(arm.rootLocal).applyMatrix4(this.root.matrixWorld);
+      const r = Math.max(...arm.chain.r) + 0.04 + arm.chain.seg * 0.125;
+      if (!sphereClear(this.terrain, _a.x, _a.y, _a.z, r)) return false;
+    }
+    for (const limb of [...this.feelers, ...this.beard]) {
+      this._headPoint(limb.rootLocal, limb.w, _a);
+      const r = Math.max(...limb.chain.r) + 0.04 + limb.chain.seg * 0.125;
+      if (!sphereClear(this.terrain, _a.x, _a.y, _a.z, r)) return false;
+    }
+    return true;
   }
 
   /** Head-space rest point to world; w blends from the rigid trunk (0) to the head (1) like the neck bend. */
@@ -824,7 +902,7 @@ export class Colossus {
     }
     const ux = a.outX * 0.5, uz = a.outZ * 0.5;
     c.constrain(rw.x, rw.y, rw.z, ux, 0.86, uz, 0.08);
-    collideChain(this.level, c);
+    collideChain(this.terrain, c, true, 28);
     c.frames(-dx, 0, -dz);
     this.armBundle.set(a.k, c);
   }
@@ -853,6 +931,7 @@ export class Colossus {
       const dx = p[o] - px, dz = p[o + 2] - pz;
       const dy = py - p[o + 1];
       if (dx * dx + dz * dz < (r + 1.25) ** 2 && dy > -(r + 1.2) && dy < r + 2.1) {
+        if (!attackClear(this.level, _a.set(p[o], p[o + 1], p[o + 2]), player.pos)) continue;
         a.hit = true;
         this._catch(a, player);
         return;
@@ -888,7 +967,7 @@ export class Colossus {
         c.p[o + 2] += (nz(s, t * 0.5, 13.5) - 0.5) * w * dt2 * 2;
       }
       c.constrain(_a.x, _a.y, _a.z, _b.x, _b.y, _b.z, stiff);
-      collideChain(this.level, c);
+      collideChain(this.terrain, c, true, 28);
       c.frames(_fwd.x, _fwd.y, _fwd.z);
       bundle.set(k, c);
     }

@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { sculptBody, EyeSet, buildTeeth, layoutEyes, makeSkinMaterial, TentacleBundle, Chain, makeNoise3, collideChain } from './flesh.js';
 import { mulberry32 } from '../render/textures.js';
+import { BodyCollider, sphereClear } from './collision.js';
 import { exposure, sight, sightRange, awarenessRate, AWARE_SUSPICIOUS, AWARE_CHASE } from './senses.js';
 
 // Brood hunters: pale many-eyed squid longer than a bus that roam the deep canals.
@@ -17,6 +18,7 @@ const ROAR_TIME = 1.3;
 const WINDUP = 0.6;
 const STRIKE = 0.3;
 const RECOVER = 1.1;
+const POSE_KEYS = ['x', 'y', 'z', 'yaw', 'pitch', 'roll', 'jetC'];
 const LUNGE_RANGE = 7.5;
 const SAFE_EYE_Y = 3.2; // player eyes above this (galleries, the diving tower) are out of reach
 
@@ -125,6 +127,9 @@ export class Hunter {
     this.strikeDir = new THREE.Vector3();
     this._buildBody();
     this._buildLimbs();
+    this.limbs = [...this.arms, ...this.tendrils];
+    this.safePose = new Float64Array(POSE_KEYS.length + 1);
+    this.goalPose = new Float64Array(POSE_KEYS.length + 1);
     this.lamp = lampSys.add({ type: 'creature', x: 0, y: -500, z: 0, color: [0.62, 0.9, 0.32], intensity: 0, range: 7.5 });
     this.voice = audio.createCreatureVoice('hunter');
     this.voice.setPosition(0, -400, 0);
@@ -140,6 +145,7 @@ export class Hunter {
     this.group.add(this.root);
     this.head = sculptBody(HEAD_P);
     this.headMesh = new THREE.Mesh(this.head.geometry, this.bodyMat);
+    this.headCollider = new BodyCollider(this.head.geometry, 0.4);
     this.root.add(this.headMesh);
     this.eyes = new EyeSet(this.headMesh, this.head.sockets, {
       iris: [0.7, 0.85, 0.2], irisAlt: [0.9, 0.6, 0.15], scleraAlt: [0.24, 0.24, 0.12],
@@ -150,6 +156,7 @@ export class Hunter {
     this.mawLocal = this.head.surface(this.head.maw.d).pos.clone();
     this.mantle = sculptBody(MANTLE_P);
     this.mantleMesh = new THREE.Mesh(this.mantle.geometry, this.bodyMat);
+    this.mantleCollider = new BodyCollider(this.mantle.geometry, 0.2);
     this.group.add(this.mantleMesh);
   }
 
@@ -219,7 +226,7 @@ export class Hunter {
     const [x, z] = L.worldCenter(tileIdx % L.W, (tileIdx / L.W) | 0);
     this.x = x;
     this.z = z;
-    this.y = CRUISE_Y - 1.5;
+    this.y = Math.max(CRUISE_Y, L.floor(tileIdx % L.W, (tileIdx / L.W) | 0) + this.headCollider.radius + 0.15);
     this.vx = this.vz = 0;
     this.pitch = this.roll = 0;
     this.awareness = 0;
@@ -249,10 +256,20 @@ export class Hunter {
     // face along the first leg of the patrol route
     if (this.path && this.path.length > 1) this.yaw = Math.atan2(this.path[1][0] - x, this.path[1][1] - z);
     else this.yaw = this.rand() * Math.PI * 2;
+    // The entire body must fit at spawn, including the mantle behind the head.
+    const firstYaw = this.yaw;
+    let fits = false;
+    for (let attempt = 0; attempt < 20; attempt++) {
+      this.yaw = wrapAngle(attempt < 16 ? firstYaw + attempt * Math.PI / 8 : (attempt - 16) * Math.PI / 2);
+      const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
+      this.trail.length = 0;
+      for (let i = 1; i <= 36; i++) this.trail.push(new THREE.Vector3(x - fx * 0.3 * i, this.y, z - fz * 0.3 * i));
+      this._place(0);
+      if (this._poseClear()) { fits = true; break; }
+    }
+    if (!fits) { this.deactivate(); return false; }
+    this._savePose(this.safePose, 0);
     const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
-    this.trail.length = 0;
-    for (let i = 1; i <= 36; i++) this.trail.push(new THREE.Vector3(x - fx * 0.3 * i, this.y, z - fz * 0.3 * i));
-    this._place(0);
     const m = this.headMesh.matrixWorld;
     const bx = -fx, bz = -fz;
     for (const a of this.arms) {
@@ -265,6 +282,7 @@ export class Hunter {
     }
     this.eyes.setAllOpen(1);
     this.voice.setState('patrol');
+    return true;
   }
 
   /** Remove from play (pooled by the director). */
@@ -318,8 +336,8 @@ export class Hunter {
     this.near = clamp(1 - Math.hypot(player.pos.x - this.x, player.pos.z - this.z) / 40, 0, 1);
     this._think(dt, t, player);
     this._jet(dt);
+    this._moveBody(t);
     this._trailPush();
-    this._place(t);
     this._simArms(dt, t);
     this._simTendrils(dt, t);
     this._effects(dt, t, ctx);
@@ -617,6 +635,8 @@ export class Hunter {
 
   _catch(player) {
     if (this.caught) return;
+    const p = player.pos, m = this.maw;
+    if (!this.level.segmentClear(m.x, m.y, m.z, p.x, p.y, p.z, 0.15)) return;
     this.caught = true;
     this._setState('feed');
     this.events.push({ type: 'catch', source: 'hunter' });
@@ -742,10 +762,79 @@ export class Hunter {
       const ch = L.ch(Math.floor(px / 2), Math.floor(pz / 2));
       return ch === '~' || ch === 'O';
     };
-    return c(x, z) && c(x + m, z) && c(x - m, z) && c(x, z + m) && c(x, z - m);
+    return c(x, z) && c(x + m, z) && c(x - m, z) && c(x, z + m) && c(x, z - m)
+      && sphereClear(L, x, this.y, z, Math.max(m, 2.0));
   }
 
   // ------------------------------------------------------------------ body
+
+  _savePose(out, t) {
+    POSE_KEYS.forEach((key, i) => { out[i] = this[key]; });
+    out[POSE_KEYS.length] = t;
+  }
+
+  _poseClear() {
+    const level = this.level, matrix = this.headMesh.matrixWorld;
+    if (!this.headCollider.clear(level, matrix) || !this.mantleCollider.clear(level, this.mantleMesh.matrixWorld)) return false;
+    for (const limb of this.limbs) {
+      _a.copy(limb.rootLocal).applyMatrix4(matrix);
+      const radius = Math.max(...limb.chain.r) + 0.04 + limb.chain.seg * 0.125;
+      if (!sphereClear(level, _a.x, _a.y, _a.z, radius)) return false;
+    }
+    return true;
+  }
+
+  /** Sweep translation and rotation together; lunges and in-place turns obey the same bounds. */
+  _moveBody(t) {
+    const x = this.safePose[0], z = this.safePose[2];
+    this._savePose(this.goalPose, t);
+    const wanted = Math.hypot(this.goalPose[0] - x, this.goalPose[2] - z);
+    if (this._sweepBody() < 1) {
+      // Keep sliding when there is room to move but not yet enough room to turn.
+      for (let i = 3; i < this.goalPose.length; i++) this.goalPose[i] = this.safePose[i];
+      if (this._sweepBody() < 1) {
+        this.goalPose[1] = this.safePose[1];
+        this._sweepBody();
+      }
+      if (wanted > 1e-5 && Math.hypot(this.x - x, this.z - z) < wanted * 0.1) {
+        this.vx *= 0.3; this.vz *= 0.3;
+        this.path = null;
+        this.noPathT = 0.25;
+      }
+    }
+  }
+
+  _sweepBody() {
+    const from = this.safePose, to = this.goalPose;
+    const t = to[POSE_KEYS.length];
+    const apply = (k) => {
+      POSE_KEYS.forEach((key, i) => {
+        const delta = key === 'yaw' ? wrapAngle(to[i] - from[i]) : to[i] - from[i];
+        this[key] = from[i] + delta * k;
+      });
+      this._place(from[POSE_KEYS.length] + (t - from[POSE_KEYS.length]) * k);
+    };
+    const distance = Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]);
+    const turn = Math.abs(wrapAngle(to[3] - from[3])) + Math.abs(to[4] - from[4]) + Math.abs(to[5] - from[5]);
+    const steps = Math.max(1, Math.ceil((distance + turn * 12) / 0.15));
+    let safe = 0;
+    for (let i = 1; i <= steps; i++) {
+      const k = i / steps;
+      apply(k);
+      if (this._poseClear()) { safe = k; continue; }
+      let blocked = k;
+      for (let j = 0; j < 8; j++) {
+        const mid = (safe + blocked) / 2;
+        apply(mid);
+        if (this._poseClear()) safe = mid;
+        else blocked = mid;
+      }
+      break;
+    }
+    apply(safe);
+    this._savePose(this.safePose, from[POSE_KEYS.length] + (t - from[POSE_KEYS.length]) * safe);
+    return safe;
+  }
 
   _jet(dt) {
     const sp = Math.hypot(this.vx, this.vz);
@@ -847,7 +936,7 @@ export class Hunter {
         if (c.p[o + 1] > 0.2 + fl * 2) c.p[o + 1] -= (c.p[o + 1] - 0.2) * Math.min(1, dt * 3);
       }
       c.constrain(_a.x, _a.y, _a.z, _b.x, _b.y, _b.z, 0.05);
-      collideChain(this.level, c);
+      collideChain(this.level, c, true);
       c.frames(0, 1, 0);
       this.armBundle.set(a.k, c);
     }
@@ -874,7 +963,7 @@ export class Hunter {
         c.p[o + 2] += (nz(s, t * 0.8, 13.5) - 0.5) * w * dt2 * 2;
       }
       c.constrain(_a.x, _a.y, _a.z, _b.x, _b.y, _b.z, 0.06);
-      collideChain(this.level, c);
+      collideChain(this.level, c, true);
       c.frames(_fwd.x, _fwd.y, _fwd.z);
       this.tendrilBundle.set(k, c);
     }
