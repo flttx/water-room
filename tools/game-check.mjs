@@ -107,7 +107,7 @@ async function main() {
     // valve: stand in front of the first valve, look at it, hold E
     const valveOk = await page.evaluate(async () => {
       const g = window.__game;
-      const v = g.props.valves.find((q) => q.name === '浴场阀门');
+      const v = g.props.valves.find((q) => q.kind === 'bath');
       const x = v.pos.x + v.nx * 1.3, z = v.pos.z + v.nz * 1.3;
       g.player.spawn(x, z, Math.atan2(v.nx, v.nz));
       g.player.pitch = -0.15;
@@ -123,7 +123,7 @@ async function main() {
     console.log(`valve ${valveOk.name}: target ${target} · done ${valves}/${await page.evaluate(() => window.__game.props.valves.length)}`);
     // the reservoir valve in the dome must be reachable by the interaction ray as well
     const domeIdx = await page.evaluate(() => {
-      const g = window.__game, i = g.props.valves.findIndex((q) => q.name === '水库阀门'), v = g.props.valves[i];
+      const g = window.__game, i = g.props.valves.findIndex((q) => q.kind === 'reservoir'), v = g.props.valves[i];
       g.player.spawn(v.pos.x + v.nx * 1.3, v.pos.z + v.nz * 1.3, Math.atan2(v.nx, v.nz));
       g.player.pitch = -0.15;
       return i;

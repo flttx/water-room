@@ -64,13 +64,36 @@ async function main() {
     };
 
     await boot();
-    assert.equal(await page.locator('#title-difficulty input[value="normal"]').isChecked(), true, 'old settings should default to normal');
+    assert.equal(await page.locator('#title-difficulty input[value="normal"]').isChecked(), true, 'difficulty should default to normal');
+    assert.equal(await page.locator('html').getAttribute('lang'), 'en', 'language should default to English');
+    assert.equal(await page.locator('#btn-start').textContent(), 'Begin descent');
+    const languageToggle = page.locator('#title [data-locale-toggle]');
+    const languageBounds = await languageToggle.boundingBox();
+    assert.ok(languageBounds.x > 640 && languageBounds.y < 60, 'title-screen language control should sit in the top-right corner');
+    await languageToggle.click();
+    assert.equal(await page.locator('html').getAttribute('lang'), 'zh-CN');
+    assert.equal(await page.locator('#btn-start').textContent(), '开始潜入');
+    assert.equal(await languageToggle.textContent(), 'English');
+    assert.equal(await languageToggle.getAttribute('aria-label'), '切换为 English');
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('drowned-halls.settings')).locale), 'zh-CN');
+    await shot('desktop-chinese-title');
+    await languageToggle.click();
     await shot('desktop-title');
     await pick('#title-difficulty', 'easy');
     await start();
     assert.equal(await page.locator('#hud-route').isVisible(), true, 'easy should show the route map');
     assert.equal(await page.locator('#hud-direction').isVisible(), false);
+    assert.match(await page.locator('#hud-route-target').textContent(), /Next/);
+    await page.evaluate(() => {
+      const ui = window.__game.ui;
+      ui.message('message.awake', 10);
+      ui.setLocale('zh-CN');
+      window.__game._hud(0);
+    });
+    assert.equal(await page.locator('#hud-msg').textContent(), '深渊里有什么东西醒了。', 'visible messages should update when the language changes');
     assert.match(await page.locator('#hud-route-target').textContent(), /下一站/);
+    await page.evaluate(() => { window.__game.ui.setLocale('en'); window.__game._hud(0); });
+    assert.equal(await page.locator('#hud-msg').textContent(), 'Something has awakened in the abyss.');
     const mapChecks = await page.evaluate(() => {
       const g = window.__game, hud = g.ui.navigation, p = g.player.pos;
       const scale = hud.canvas.width / 80;
@@ -141,12 +164,12 @@ async function main() {
         m.pos.x === d.bellPos[0] && m.pos.y === d.bellPos[1] && m.pos.z === d.bellPos[2]);
       lurker.pos.copy(saved); lurker.group.visible = visible;
       g.leviathan.active = true; g.leviathan.near = Infinity;
-      const noUnplaced = !g._mapMonsters().some((m) => m.name === '利维坦');
+      const noUnplaced = !g._mapMonsters().some((m) => m.name === 'creature.leviathan');
       g.leviathan.near = 10; g.leviathan.headPos.copy(p);
       const leviathan = g._mapMonsters().some((m) => m.pos === g.leviathan.headPos);
       g.leviathan.reset();
       g.newGame(); g._hud(0);
-      const reset = !g._mapMonsters().some((m) => ['追猎者', '利维坦'].includes(m.name));
+      const reset = !g._mapMonsters().some((m) => ['creature.hunter', 'creature.leviathan'].includes(m.name));
       return { before, moved, cached, placed, spawned, despawned, exact, drifted, noUnplaced, leviathan, reset };
     });
     assert.ok(Object.values(monsterChecks).every(Boolean), `monster map regression: ${JSON.stringify(monsterChecks)}`);
@@ -217,6 +240,13 @@ async function main() {
     assert.deepEqual(routeUpdates, { changed: true, waiting: 'gate', exit: 'exit', reset: 'valve', respawn: true });
 
     await settings();
+    const settingsLanguageToggle = page.locator('#settings-form [data-locale-toggle]');
+    assert.equal(await settingsLanguageToggle.textContent(), '简体中文');
+    await settingsLanguageToggle.click();
+    assert.equal(await page.locator('html').getAttribute('lang'), 'zh-CN');
+    assert.equal(await page.locator('#settings-title').textContent(), '设置');
+    await settingsLanguageToggle.click();
+    assert.equal(await page.locator('html').getAttribute('lang'), 'en');
     await checkFocusLoop('easy');
     await pick('#settings-form', 'normal');
     await checkFocusLoop('normal');
@@ -228,7 +258,7 @@ async function main() {
     assert.notEqual(await page.locator('#hud-direction-arrow').getAttribute('style'), arrowBefore, 'arrow should follow camera rotation');
     await shot('desktop-normal');
 
-    await page.evaluate(() => window.__game.ui.message('任务提示测试', 10, 'task'));
+    await page.evaluate(() => window.__game.ui.message('message.awake', 10, 'task'));
     await settings();
     await pick('#settings-form', 'hard');
     await checkFocusLoop('hard');
@@ -241,15 +271,15 @@ async function main() {
     assert.equal(await page.locator('#hud-msg').evaluate((el) => el.classList.contains('show')), false);
     await page.evaluate(() => {
       const g = window.__game;
-      g.ui.message('危险反馈测试', 10);
+      g.ui.message('message.entangled', 10);
       g.player.pos.copy(g.props.valves[0].pos);
       g.valveTarget = 0;
       g.player.breath = 12;
       g.player.mode = 'under';
       g._hud(0);
     });
-    assert.equal(await page.locator('#hud-msg').textContent(), '危险反馈测试');
-    assert.match(await page.locator('#hud-prompt-text').textContent(), /按住 E/);
+    assert.equal(await page.locator('#hud-msg').textContent(), 'You are tangled—break free! One more hit and it is over.');
+    assert.match(await page.locator('#hud-prompt-text').textContent(), /Hold E/);
     assert.equal(await page.locator('#hud-breath').evaluate((el) => el.classList.contains('show')), true);
     await shot('desktop-hard');
     await page.evaluate(() => window.__game.pause());
@@ -264,6 +294,9 @@ async function main() {
     assert.equal(await page.locator('#title-difficulty input[value="hard"]').isChecked(), true, 'difficulty should survive reload');
     await page.setViewportSize({ width: 390, height: 844 });
     await shot('mobile-title');
+    const mobileLanguageBounds = await page.locator('#title [data-locale-toggle]').boundingBox();
+    assert.ok(mobileLanguageBounds.x > 150 && mobileLanguageBounds.x + mobileLanguageBounds.width <= 390,
+      'title-screen language control should stay in the top-right corner on mobile');
     await pick('#title-difficulty', 'easy');
     await start();
     await shot('mobile-easy');

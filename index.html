@@ -1,30 +1,30 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <title>深水房 · Drowned Halls</title>
+  <title>Drowned Halls</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 16 16%22%3E%3Ccircle cx=%228%22 cy=%228%22 r=%227%22 fill=%22%2302080b%22/%3E%3Cellipse cx=%228%22 cy=%228%22 rx=%221.4%22 ry=%224.5%22 fill=%22%23f0a64a%22/%3E%3C/svg%3E">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-  <canvas id="view" aria-label="游戏画面：点击以控制视角" tabindex="-1"></canvas>
+  <canvas id="view" aria-label="Game view: click to control the camera" data-i18n-aria="ui.view" tabindex="-1"></canvas>
 
   <!-- in-game HUD -->
   <div id="hud" class="hud" hidden>
     <div class="crosshair" aria-hidden="true"></div>
     <div class="hud-top">
-      <div class="valves" id="hud-valves" aria-label="已开启阀门" data-task-hint>阀门 <b>0</b>/<span>4</span></div>
-      <section class="navigation" id="hud-navigation" aria-label="逃生指引" hidden>
+      <div class="valves" id="hud-valves" aria-label="Valves activated" data-i18n-aria="ui.valvesAria" data-task-hint><span data-i18n="ui.valves">Valves</span> <b>0</b>/<span>4</span></div>
+      <section class="navigation" id="hud-navigation" aria-label="Navigation guidance" data-i18n-aria="ui.navigationAria" hidden>
         <div class="route-map" id="hud-route" hidden>
-          <div class="route-heading"><span>逃生路线</span><span aria-label="地图上方为北">北</span></div>
-          <canvas id="hud-map" width="504" height="308" role="img" aria-label="逃生路线地图"></canvas>
-          <div class="route-legend"><span>视野宽 80 米</span><span><i aria-hidden="true"></i>怪物位置</span></div>
+          <div class="route-heading"><span data-i18n="navigation.route">Escape route</span><span aria-label="North is at the top of the map" data-i18n-aria="ui.mapNorth" data-i18n="navigation.north">North</span></div>
+          <canvas id="hud-map" width="504" height="308" role="img" aria-label="Escape route map" data-i18n-aria="ui.navCanvas"></canvas>
+          <div class="route-legend"><span data-i18n="navigation.viewWidth">View width: 80 m</span><span><i aria-hidden="true"></i><span data-i18n="navigation.monsters">Monster positions</span></span></div>
           <p class="route-target" id="hud-route-target"></p>
           <p class="route-status" id="hud-route-status"></p>
         </div>
-        <div class="direction-guide" id="hud-direction" role="img" aria-label="前进方向" hidden>
+        <div class="direction-guide" id="hud-direction" role="img" aria-label="Direction of travel" data-i18n-aria="ui.forward" hidden>
           <svg id="hud-direction-arrow" viewBox="0 0 64 64" width="48" height="48" aria-hidden="true">
             <path d="M32 8 47 48 32 40 17 48Z" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
           </svg>
@@ -38,64 +38,65 @@
         <ellipse class="eye-pupil" cx="32" cy="16" rx="3" ry="9"></ellipse>
       </svg>
     </div>
-    <div class="breath" id="hud-breath" role="meter" aria-label="氧气" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
-      <span class="breath-label">氧气</span>
+    <div class="breath" id="hud-breath" role="meter" aria-label="Oxygen" data-i18n-aria="ui.oxygen" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100">
+      <span class="breath-label" data-i18n="ui.oxygen">Oxygen</span>
       <span class="breath-track"><span class="breath-fill" id="hud-breath-fill"></span></span>
     </div>
     <div class="prompt" id="hud-prompt" hidden>
       <span class="ring" id="hud-ring" aria-hidden="true"></span>
       <span id="hud-prompt-text"></span>
     </div>
-    <div class="depth" id="hud-depth" hidden>水压过大 —— 上浮</div>
+    <div class="depth" id="hud-depth" data-i18n="ui.underwater" hidden>Pressure too high — surface</div>
     <div class="message" id="hud-msg" role="status" aria-live="polite"></div>
-    <div class="flash-ind" id="hud-flash" aria-hidden="true">F 手电</div>
+    <div class="flash-ind" id="hud-flash" aria-hidden="true" data-i18n="ui.flash">F Flashlight</div>
   </div>
 
   <!-- loading -->
   <section id="loading" class="screen screen-dark" aria-busy="true" aria-labelledby="loading-title">
     <div class="loading-box">
-      <h1 id="loading-title" class="logo">深水房<small>DROWNED HALLS</small></h1>
-      <div class="bar" role="progressbar" aria-label="加载进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="load-bar">
+      <h1 id="loading-title" class="logo"><span data-i18n="ui.title">DROWNED HALLS</span><small data-i18n="ui.logoSub">ABANDONED BATHHOUSE</small></h1>
+      <div class="bar" role="progressbar" aria-label="Loading progress" data-i18n-aria="ui.loading" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="load-bar">
         <span id="load-fill"></span>
       </div>
-      <p class="load-step" id="load-step">正在灌水……</p>
+      <p class="load-step" id="load-step">Filling the halls…</p>
     </div>
   </section>
 
   <!-- title -->
   <section id="title" class="screen screen-title" hidden aria-labelledby="title-name">
+    <button type="button" class="locale-toggle title-locale-toggle" data-locale-toggle aria-label="Switch language to Simplified Chinese">简体中文</button>
     <div class="title-box">
-      <h1 id="title-name" class="logo">深水房<small>DROWNED HALLS</small></h1>
-      <p class="tagline">这座浴场从来没有尽头。水比你记得的更深。<br>别出声，别让它们看见你。</p>
+      <h1 id="title-name" class="logo"><span data-i18n="ui.title">DROWNED HALLS</span><small data-i18n="ui.logoSub">ABANDONED BATHHOUSE</small></h1>
+      <p class="tagline" data-i18n="ui.tagline">This bathhouse has no end. The water is deeper than you remember.<br>Stay quiet. Do not let them see you.</p>
       <fieldset class="difficulty-choice" id="title-difficulty" aria-describedby="title-difficulty-note">
-        <legend>游戏难度</legend>
+        <legend data-i18n="ui.difficulty">Difficulty</legend>
         <div class="seg">
-          <label><input type="radio" name="difficulty" value="easy"> 简单</label>
-          <label><input type="radio" name="difficulty" value="normal" checked> 正常</label>
-          <label><input type="radio" name="difficulty" value="hard"> 困难</label>
+          <label><input type="radio" name="difficulty" value="easy"><span data-i18n="ui.easy">Easy</span></label>
+          <label><input type="radio" name="difficulty" value="normal" checked><span data-i18n="ui.normal">Normal</span></label>
+          <label><input type="radio" name="difficulty" value="hard"><span data-i18n="ui.hard">Hard</span></label>
         </div>
-        <p class="difficulty-note" id="title-difficulty-note">方向箭头指引</p>
+        <p class="difficulty-note" id="title-difficulty-note">Directional arrow guidance</p>
       </fieldset>
-      <nav class="menu" aria-label="主菜单">
-        <button type="button" id="btn-start" class="primary">开始潜入</button>
-        <button type="button" id="btn-settings" aria-haspopup="dialog" aria-expanded="false">设置</button>
-        <button type="button" id="btn-help" aria-haspopup="dialog" aria-expanded="false">操作说明</button>
+      <nav class="menu" aria-label="Main menu" data-i18n-aria="ui.mainMenu">
+        <button type="button" id="btn-start" class="primary" data-i18n="ui.start">Begin descent</button>
+        <button type="button" id="btn-settings" aria-haspopup="dialog" aria-expanded="false" data-i18n="ui.settings">Settings</button>
+        <button type="button" id="btn-help" aria-haspopup="dialog" aria-expanded="false" data-i18n="ui.help">How to play</button>
       </nav>
-      <p class="hint">建议佩戴耳机，在黑暗的房间里游玩</p>
+      <p class="hint" data-i18n="ui.headphones">Headphones recommended. Play in a dark room.</p>
     </div>
   </section>
 
   <!-- pause -->
   <section id="pause" class="screen screen-dim" hidden aria-labelledby="pause-title">
     <div class="panel">
-      <h2 id="pause-title">暂停</h2>
+      <h2 id="pause-title" data-i18n="ui.pause">Paused</h2>
       <p class="objective" id="pause-objective" data-task-hint></p>
-      <nav class="menu" aria-label="暂停菜单">
-        <button type="button" id="btn-resume" class="primary">继续</button>
-        <button type="button" id="btn-settings2" aria-haspopup="dialog" aria-expanded="false">设置</button>
-        <button type="button" id="btn-help2" aria-haspopup="dialog" aria-expanded="false">操作说明</button>
-        <button type="button" id="btn-restart">重新开始</button>
-        <button type="button" id="btn-quit">返回标题</button>
+      <nav class="menu" aria-label="Pause menu" data-i18n-aria="ui.pauseMenu">
+        <button type="button" id="btn-resume" class="primary" data-i18n="ui.resume">Resume</button>
+        <button type="button" id="btn-settings2" aria-haspopup="dialog" aria-expanded="false" data-i18n="ui.settings">Settings</button>
+        <button type="button" id="btn-help2" aria-haspopup="dialog" aria-expanded="false" data-i18n="ui.help">How to play</button>
+        <button type="button" id="btn-restart" data-i18n="ui.restart">Restart</button>
+        <button type="button" id="btn-quit" data-i18n="ui.titleScreen">Title screen</button>
       </nav>
     </div>
   </section>
@@ -103,7 +104,7 @@
   <!-- death -->
   <section id="death" class="screen screen-death" hidden aria-live="assertive">
     <div class="death-box">
-      <h2 id="death-title">你被深渊吞没</h2>
+      <h2 id="death-title" data-i18n="ui.death">The abyss takes you</h2>
       <p id="death-sub"></p>
     </div>
   </section>
@@ -111,12 +112,12 @@
   <!-- win -->
   <section id="win" class="screen screen-win" hidden aria-labelledby="win-title">
     <div class="panel">
-      <h2 id="win-title">你浮出了水面</h2>
-      <p class="win-sub">外面在下雨。你从未这样感激过冷空气。</p>
+      <h2 id="win-title" data-i18n="ui.win">You surface at last</h2>
+      <p class="win-sub" data-i18n="ui.winSub">Rain falls outside. You have never been so grateful for cold air.</p>
       <dl class="stats" id="win-stats"></dl>
-      <nav class="menu" aria-label="结算菜单">
-        <button type="button" id="btn-again" class="primary">再潜一次</button>
-        <button type="button" id="btn-win-title">返回标题</button>
+      <nav class="menu" aria-label="Results menu" data-i18n-aria="ui.results">
+        <button type="button" id="btn-again" class="primary" data-i18n="ui.again">Dive again</button>
+        <button type="button" id="btn-win-title" data-i18n="ui.titleScreen">Title screen</button>
       </nav>
     </div>
   </section>
@@ -124,40 +125,41 @@
   <!-- error -->
   <section id="error" class="screen screen-dark" hidden role="alert">
     <div class="panel">
-      <h2>无法启动</h2>
-      <p id="error-text">你的浏览器无法运行这个游戏。请使用支持 WebGL2 的最新版 Chrome、Edge 或 Firefox，并确认已开启硬件加速。</p>
+      <h2 data-i18n="ui.errorTitle">Unable to start</h2>
+      <p id="error-text" data-i18n="ui.errorText">Your browser cannot run this game. Use the latest Chrome, Edge, or Firefox with WebGL2 and hardware acceleration enabled.</p>
     </div>
   </section>
 
   <!-- settings dialog -->
   <div id="settings" class="modal" hidden>
     <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
-      <h2 id="settings-title">设置</h2>
+      <h2 id="settings-title" data-i18n="ui.settingsTitle">Settings</h2>
       <form id="settings-form" class="form">
         <fieldset aria-describedby="settings-difficulty-note">
-          <legend>游戏难度</legend>
+          <legend data-i18n="ui.difficulty">Difficulty</legend>
           <div class="seg">
-            <label><input type="radio" name="difficulty" value="easy"> 简单</label>
-            <label><input type="radio" name="difficulty" value="normal"> 正常</label>
-            <label><input type="radio" name="difficulty" value="hard"> 困难</label>
+            <label><input type="radio" name="difficulty" value="easy"><span data-i18n="ui.easy">Easy</span></label>
+            <label><input type="radio" name="difficulty" value="normal"><span data-i18n="ui.normal">Normal</span></label>
+            <label><input type="radio" name="difficulty" value="hard"><span data-i18n="ui.hard">Hard</span></label>
           </div>
-          <p class="difficulty-note" id="settings-difficulty-note">方向箭头指引</p>
+          <p class="difficulty-note" id="settings-difficulty-note">Directional arrow guidance</p>
         </fieldset>
         <fieldset>
-          <legend>画质</legend>
+          <legend data-i18n="ui.quality">Graphics quality</legend>
           <div class="seg">
-            <label><input type="radio" name="quality" value="low"> 低</label>
-            <label><input type="radio" name="quality" value="medium"> 中</label>
-            <label><input type="radio" name="quality" value="high"> 高</label>
+            <label><input type="radio" name="quality" value="low"><span data-i18n="ui.low">Low</span></label>
+            <label><input type="radio" name="quality" value="medium"><span data-i18n="ui.medium">Medium</span></label>
+            <label><input type="radio" name="quality" value="high"><span data-i18n="ui.high">High</span></label>
           </div>
         </fieldset>
-        <label class="row">鼠标灵敏度 <input type="range" name="sens" min="0.3" max="2.5" step="0.05"> <output name="sensOut"></output></label>
-        <label class="row">视野 <input type="range" name="fov" min="60" max="95" step="1"> <output name="fovOut"></output></label>
-        <label class="row">音量 <input type="range" name="volume" min="0" max="1" step="0.01"> <output name="volOut"></output></label>
-        <label class="row check"><input type="checkbox" name="invertY"> 反转垂直视角</label>
+        <label class="row"><span data-i18n="ui.sensitivity">Mouse sensitivity</span> <input type="range" name="sens" min="0.3" max="2.5" step="0.05"> <output name="sensOut"></output></label>
+        <label class="row"><span data-i18n="ui.fov">Field of view</span> <input type="range" name="fov" min="60" max="95" step="1"> <output name="fovOut"></output></label>
+        <label class="row"><span data-i18n="ui.volume">Volume</span> <input type="range" name="volume" min="0" max="1" step="0.01"> <output name="volOut"></output></label>
+        <label class="row check"><input type="checkbox" name="invertY"> <span data-i18n="ui.invertY">Invert vertical look</span></label>
+        <label class="row"><span data-i18n="ui.language">Language</span><button type="button" class="locale-toggle" data-locale-toggle aria-label="Switch language to Simplified Chinese">简体中文</button></label>
       </form>
       <div class="dialog-actions">
-        <button type="button" id="settings-close" class="primary">完成</button>
+        <button type="button" id="settings-close" class="primary" data-i18n="ui.done">Done</button>
       </div>
     </div>
   </div>
@@ -165,22 +167,21 @@
   <!-- help dialog -->
   <div id="help" class="modal" hidden>
     <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="help-title">
-      <h2 id="help-title">操作说明</h2>
+      <h2 id="help-title" data-i18n="ui.helpTitle">How to play</h2>
       <dl class="keys">
-        <dt>W A S D</dt><dd>移动 / 游泳</dd>
-        <dt>鼠标</dt><dd>环顾</dd>
-        <dt>Shift</dt><dd>奔跑 / 快速游动（声音更大）</dd>
-        <dt>C / Ctrl</dt><dd>C 切换蹲伏 / 起身，Ctrl 按住蹲伏；在水面按下即下潜，水下按住下沉</dd>
-        <dt>空格</dt><dd>跳跃；水下时上浮；靠近池边时攀上窄道</dd>
-        <dt>E（按住）</dt><dd>转动阀门</dd>
-        <dt>F</dt><dd>手电筒（会让你更显眼）</dd>
-        <dt>Esc</dt><dd>暂停</dd>
+        <dt>W A S D</dt><dd data-i18n="ui.move">Move / swim</dd>
+        <dt data-i18n="ui.mouse">Mouse</dt><dd data-i18n="ui.look">Look around</dd>
+        <dt>Shift</dt><dd data-i18n="ui.run">Run / swim faster (louder)</dd>
+        <dt>C / Ctrl</dt><dd data-i18n="ui.crouch">C crouches / stands; hold Ctrl to crouch. Press C at the surface to dive; hold it underwater to descend.</dd>
+        <dt>Space</dt><dd data-i18n="ui.jump">Jump; rise underwater; climb onto a narrow ledge near a pool.</dd>
+        <dt>E (hold)</dt><dd data-i18n="ui.valve">Turn a valve</dd>
+        <dt>F</dt><dd data-i18n="ui.flashlight">Flashlight (makes you easier to spot)</dd>
+        <dt>Esc</dt><dd data-i18n="ui.pauseKey">Pause</dd>
       </dl>
-      <p class="help-note" data-task-hint>目标：找到出口。四处阀门能开启深渊浴场北侧的闸门。</p>
-      <p class="help-note">水下只能憋气约三十秒。水里的东西靠光和声音找你——蹲下、慢游、躲在柱子和墙后。<br>
-        提灯亮起的救生圈是检查点，被抓住后会从那里醒来。</p>
+      <p class="help-note" data-task-hint data-i18n="ui.goal">Goal: find the exit. Four valves open the gate north of the Abyss Baths.</p>
+      <p class="help-note" data-i18n="ui.survival">You can hold your breath for about thirty seconds. Creatures in the water track light and sound—crouch, swim slowly, and hide behind pillars and walls.<br>The lit lifebuoy marks a checkpoint. If caught, you wake there.</p>
       <div class="dialog-actions">
-        <button type="button" id="help-close" class="primary">明白</button>
+        <button type="button" id="help-close" class="primary" data-i18n="ui.done">Done</button>
       </div>
     </div>
   </div>

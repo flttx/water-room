@@ -178,8 +178,6 @@ export class Player {
     const moving = _wish.lengthSq() > 0.01;
 
     const tx = Math.floor(p.x / 2), tz = Math.floor(p.z / 2);
-    const water = L.isWater(tx, tz);
-
     if (this.mode === 'climb') {
       const c = this.climb;
       c.t += dt / c.dur;

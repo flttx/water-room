@@ -3,7 +3,8 @@ const MAP_PIXELS_PER_METER = 4;
 const MAP_WIDTH_METERS = 80;
 
 export class NavigationHud {
-  constructor() {
+  constructor(t) {
+    this.t = t;
     const get = (id) => document.getElementById(id);
     this.root = get('hud-navigation');
     this.route = get('hud-route');
@@ -34,33 +35,35 @@ export class NavigationHud {
     this.direction.hidden = map;
     const reachable = nav.status !== 'unreachable' && nav.target;
     let action = '';
-    if (!reachable) action = '暂无路线';
-    else if (nav.action === 'breathe') action = '换气';
-    else if (nav.status === 'arrived') action = nav.target.kind === 'valve' ? '按住 E' : '继续前进';
-    else if (nav.status === 'waiting' && nav.distance < 3) action = '等待闸门';
-    else if (nav.waypoint?.mode === 'under' && player.pos.y > nav.waypoint.y + 0.7) action = '下潜';
-    else if (player.underwater && nav.waypoint?.mode !== 'under') action = '上浮';
-    else if (player.inWater && ['ground', 'climb'].includes(nav.waypoint?.mode)) action = '空格攀上';
+    if (!reachable) action = this.t('navigation.unavailable');
+    else if (nav.action === 'breathe') action = this.t('navigation.breathe');
+    else if (nav.status === 'arrived') action = this.t(nav.target.kind === 'valve' ? 'navigation.turn' : 'navigation.continue');
+    else if (nav.status === 'waiting' && nav.distance < 3) action = this.t('navigation.wait');
+    else if (nav.waypoint?.mode === 'under' && player.pos.y > nav.waypoint.y + 0.7) action = this.t('navigation.dive');
+    else if (player.underwater && nav.waypoint?.mode !== 'under') action = this.t('navigation.surface');
+    else if (player.inWater && ['ground', 'climb'].includes(nav.waypoint?.mode)) action = this.t('navigation.climb');
 
     this.action.textContent = action;
-    const showArrow = reachable && action !== '等待闸门' && action !== '换气' && nav.status !== 'arrived';
+    const showArrow = reachable && action !== this.t('navigation.wait') && action !== this.t('navigation.breathe') && nav.status !== 'arrived';
     this.arrow.toggleAttribute('hidden', !showArrow);
     if (nav.waypoint && showArrow) {
       const dx = nav.waypoint.x - player.pos.x, dz = nav.waypoint.z - player.pos.z;
       const angle = Math.atan2(dx, -dz) + player.yaw;
       this.arrow.style.transform = `rotate(${angle}rad)`;
       const a = Math.atan2(Math.sin(angle), Math.cos(angle));
-      const direction = Math.abs(a) < Math.PI / 4 ? '向前' : Math.abs(a) > Math.PI * 3 / 4 ? '向后' : a > 0 ? '向右' : '向左';
-      this.direction.setAttribute('aria-label', action || `${direction}沿通道前进`);
-    } else this.direction.setAttribute('aria-label', action || '前进方向');
+      const directionKey = Math.abs(a) < Math.PI / 4 ? 'navigation.front' : Math.abs(a) > Math.PI * 3 / 4 ? 'navigation.back' : a > 0 ? 'navigation.right' : 'navigation.left';
+      this.direction.setAttribute('aria-label', action || this.t('navigation.direction', { direction: this.t(directionKey) }));
+    } else this.direction.setAttribute('aria-label', action || this.t('ui.forward'));
 
     if (!map) return;
-    const name = reachable ? nav.target.name : '暂时无法规划路线';
+    const name = reachable ? this.t(nav.target.name) : this.t('navigation.tooFar');
     const distance = Number.isFinite(nav.distance) ? Math.ceil(nav.distance) : 0;
-    this.target.textContent = reachable ? `下一站 · ${name}` : name;
-    this.status.textContent = action || `沿路线前进 · ${distance} 米`;
+    this.target.textContent = reachable ? this.t('navigation.next', { name }) : name;
+    this.status.textContent = action || this.t('navigation.routeStatus', { distance });
     const nearby = this._draw(nav, player, monsters);
-    this.canvas.setAttribute('aria-label', `${reachable ? `逃生路线：前往${name}，沿途约${distance}米` : '当前位置暂无可通行路线'}；附近地图，上方为北，红色菱形为怪物${nearby.length ? `：${nearby.join('、')}` : '，当前范围内无怪物'}`);
+    const route = reachable ? this.t('navigation.mapAria', { name, distance }) : this.t('navigation.noRoute');
+    const monstersLabel = nearby.length ? `: ${nearby.map((key) => this.t(key)).join(', ')}` : this.t('navigation.mapNone');
+    this.canvas.setAttribute('aria-label', `${route}; ${this.t('navigation.mapNearby')}${monstersLabel}`);
   }
 
   _draw(nav, player, monsters) {

@@ -963,13 +963,13 @@ export class Colossus {
       if (dx * dx + dz * dz < (r + 1.25) ** 2 && dy > -(r + 1.2) && dy < r + 2.1) {
         if (!attackClear(this.level, _a.set(p[o], p[o + 1], p[o + 2]), player.pos)) continue;
         a.hit = true;
-        this._catch(a, player);
+        this._catch(a);
         return;
       }
     }
   }
 
-  _catch(a, player) {
+  _catch(a) {
     if (this.caught) return;
     this.caught = true;
     const maw = this.headMesh.localToWorld(this.mawLocal.clone());

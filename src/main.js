@@ -39,20 +39,16 @@ const GATE_POS = new THREE.Vector3(103, 3, 11);
 const TITLE_TARGET = new THREE.Vector3(103, 5.5, 12);
 
 const DEATH_TEXT = {
-  colossus: ['你被深渊吞没', '触腕把你拖回了水底'],
-  hunter: ['你被深渊吞没', '它一直跟在你身后'],
-  lurker: ['你被深渊吞没', '那盏灯不是出口'],
-  crab: ['你被深渊吞没', '那些不是柱子，是它的腿'],
-  angler: ['你被深渊吞没', '它一动不动，直到你游得太快'],
-  whale: ['你被深渊吞没', '死去的东西也会饿'],
-  siphonophore: ['你被深渊吞没', '丝网收紧，把你拖进了钟群'],
-  drown: ['你沉了下去', '肺里灌满了冰冷的水'],
+  colossus: ['death.colossus.title', 'death.colossus.sub'], hunter: ['death.hunter.title', 'death.hunter.sub'],
+  lurker: ['death.lurker.title', 'death.lurker.sub'], crab: ['death.crab.title', 'death.crab.sub'],
+  angler: ['death.angler.title', 'death.angler.sub'], whale: ['death.whale.title', 'death.whale.sub'],
+  siphonophore: ['death.siphonophore.title', 'death.siphonophore.sub'], drown: ['death.drown.title', 'death.drown.sub'],
 };
 
 const HINTS = [
-  [2, 'WASD 移动 · 鼠标环顾 · Esc 暂停', 5],
-  [9, 'C 切换蹲伏 / 起身，蹲伏时脚步更轻', 5.5],
-  [17, '靠近池边按空格攀上窄道；在水面按 C 下潜', 5.5],
+  [2, 'message.hintMove', 5],
+  [9, 'message.hintCrouch', 5.5],
+  [17, 'message.hintClimb', 5.5],
 ];
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -85,7 +81,7 @@ class Game {
   async boot() {
     const ui = this.ui;
     const step = async (p, text) => { ui.setLoading(p, text); await nextFrame(); };
-    await step(0.03, '正在灌水……');
+    await step(0.03, 'loading.flood');
 
     const canvas = document.getElementById('view');
     this.canvas = canvas;
@@ -116,22 +112,22 @@ class Game {
     this.level = level;
     const lamps = planLamps(level);
     this.lamps = lamps;
-    await step(0.1, '点亮钠灯，烘焙瓷砖上的光……');
+    await step(0.1, 'loading.lights');
 
     const shell = buildShell(level, lamps);
     scene.add(shell.group);
     this.baker = shell.baker;
-    await step(0.34, '测量黑暗……');
+    await step(0.34, 'loading.dark');
     const lightGrid = this.baker.buildLightGrid();
 
-    await step(0.42, '让水面平静下来……');
+    await step(0.42, 'loading.water');
     this.water = new Water(buildWaterGeometry(level), renderer);
     scene.add(this.water.reflector);
     this.lampSys = new LampSystem(lamps);
     this.fx = new FX(level, lamps, scene);
 
-    await step(0.48, '安装阀门、救生圈与生锈的闸门……');
-    this.props = new Props({ scene, level, lamps, lampSys: this.lampSys, baker: this.baker });
+    await step(0.48, 'loading.props');
+    this.props = new Props({ scene, level, lamps, lampSys: this.lampSys, baker: this.baker, locale: ui.locale, t: (key) => ui.t(key) });
     this.navigation = new Navigation(level);
     ui.navigation.setLevel(level);
 
@@ -139,24 +135,24 @@ class Game {
     this.input = new Input(canvas);
     this.audio = new AudioEngine();
 
-    await step(0.64, '有什么东西在深处成形……');
+    await step(0.64, 'loading.shape');
     const opts = { scene, level, lampSys: this.lampSys, audio: this.audio, water: this.water, fx: this.fx, lightGrid };
     const { colossus, leviathan } = await models;
     const rigged = await riggedModels;
     this.colossus = new Colossus({ ...opts, model: colossus });
-    await step(0.74, '它们在等待……');
+    await step(0.74, 'loading.wait');
     this.lurkers = new Lurkers(opts);
     this.drifter = new Drifter(opts);
-    await step(0.82, '远处有东西经过……');
+    await step(0.82, 'loading.pass');
     this.leviathan = new Leviathan({ ...opts, model: leviathan, rigged: rigged.leviathanRig });
     this.director = new Director(opts);
-    await step(0.86, '穹顶下的黑水里不止一种东西……');
+    await step(0.86, 'loading.dome');
     this._domeCreatures(opts, rigged);
     for (const c of [this.colossus, this.lurkers, this.director, ...this.dome, ...this.domeDrifters]) c.onCatch = (info) => this.die(info);
 
     this._lampHums();
 
-    await step(0.9, '调整镜头……');
+    await step(0.9, 'loading.camera');
     this.post = new Post(renderer, scene, camera, { msaa: false });
     this.applySettings(ui.settings);
     window.addEventListener('resize', () => this.resize());
@@ -169,7 +165,7 @@ class Game {
     } catch (err) {
       console.warn('shader precompile failed', err);
     }
-    await step(1, '准备就绪');
+    await step(1, 'loading.ready');
     this.state = 'title';
     ui.show('title');
     this.last = performance.now();
@@ -213,6 +209,7 @@ class Game {
 
   // ------------------------------------------------------------------ settings & sizing
   applySettings(s) {
+    this.props?.setLocale(s.locale);
     this.navigation?.reset();
     const q = QUALITY[s.quality] || QUALITY.medium;
     this.pixelRatio = Math.min(window.devicePixelRatio || 1, q.max) * q.scale;
@@ -302,7 +299,8 @@ class Game {
     this.input.down.clear();
     this.input.exitLock();
     this.audio.suspend();
-    this.ui.setObjective(this._objective());
+    const objective = this._objective();
+    this.ui.setObjective(...(Array.isArray(objective) ? objective : [objective]));
     this.ui.show('pause');
   }
 
@@ -317,8 +315,8 @@ class Game {
 
   _objective() {
     const n = this.valvesDone(), all = this.props.valves.length;
-    if (n >= all) return '闸门已经升起。穿过深渊浴场，向北，去有光的地方。';
-    return `找到出口。${'零一二三四五六七八九'[all] || all}处阀门能开启深渊浴场北侧的闸门——已开启 ${n}/${all}。救生圈提灯是检查点。`;
+    if (n >= all) return 'objective.open';
+    return ['objective.valves', { all, done: n }];
   }
 
   valvesDone() { return this.props.valves.filter((v) => v.done).length; }
@@ -382,7 +380,7 @@ class Game {
       this.renderer.setAnimationLoop(null);
       console.error(err);
       this.input.exitLock();
-      document.getElementById('error-text').textContent = '游戏运行时出现了问题。请刷新页面重试。';
+      document.getElementById('error-text').textContent = this.ui.t('ui.runtimeError');
       this.ui.showError();
     }
   }
@@ -585,7 +583,7 @@ class Game {
     };
     for (const e of this.colossus.events) {
       if (e.type === 'rise') {
-        this.ui.message('深渊里有什么东西醒了。', 5);
+        this.ui.message('message.awake', 5);
         player.shake = Math.max(player.shake, 0.4);
       } else if (e.type === 'spotted') spotted();
       else if (e.type === 'slam') shakeAt(e.x, e.z, 0.9, 30);
@@ -606,15 +604,15 @@ class Game {
     for (const e of this.drifter.events) {
       if (e.type === 'sting') {
         this.noise(e.x, e.y, e.z, 25);
-        this.ui.message('刺痛——别碰那些发光的丝', 3);
+        this.ui.message('message.sting', 3);
       }
     }
     for (const e of this.leviathan.events) {
-      if (e.type === 'pass') this.ui.message('……脚下的黑暗在移动。', 4);
+      if (e.type === 'pass') this.ui.message('message.leviathan', 4);
     }
     for (const e of this.whale ? this.whale.events : []) {
       if (e.type === 'spotted') spotted();
-      else if (e.type === 'pass') this.ui.message('一具巨大的尸骸从你身边滑过……别出声。', 4);
+      else if (e.type === 'pass') this.ui.message('message.whale', 4);
     }
     for (const e of this.crab ? this.crab.events : []) {
       if (e.type === 'spotted') spotted();
@@ -630,7 +628,7 @@ class Game {
       for (const e of d.events) {
         if (e.type !== 'sting') continue;
         this.noise(e.x, e.y, e.z, 25);
-        this.ui.message('你被缠住了——快挣脱！再碰一次就完了', 3.5);
+        this.ui.message('message.entangled', 3.5);
       }
     }
   }
@@ -679,16 +677,16 @@ class Game {
     const n = this.valvesDone(), all = props.valves.length;
     if (v.pump) {
       props.openDoor();
-      ui.message(`${v.name}已开启（${n}/${all}）。加压门的锁扣松开了。`, 5.5, 'task');
+      ui.message('message.valvePump', 5.5, 'task', { valve: `valve.${v.kind}`, done: n, all });
     } else {
-      ui.message(`${v.name}已开启（${n}/${all}）。管道深处传来轰鸣。`, 5, 'task');
+      ui.message('message.valveOther', 5, 'task', { valve: `valve.${v.kind}`, done: n, all });
     }
     if (n >= all) {
       props.openGate();
       this.colossus.gateOpen = true;
       audio.gateOpen(GATE_POS);
       setTimeout(() => {
-        if (this.state === 'playing') ui.message('远处的闸门正在升起——深渊浴场北侧。', 6, 'task');
+        if (this.state === 'playing') ui.message('message.gate', 6, 'task');
       }, 5600);
     }
   }
@@ -716,13 +714,13 @@ class Game {
         props.activateCheckpoint(i);
         this.stats.cps++;
         this.audio.checkpoint();
-        this.ui.message('救生圈旁的提灯亮了。检查点。', 3.5, 'task');
+        this.ui.message('message.checkpoint', 3.5, 'task');
       }
       this.cp = i;
     });
     if (!this.seenAbyss && level.inHall(player.tileX, player.tileZ) === 22) {
       this.seenAbyss = true;
-      this.ui.message('深渊浴场。这里的水没有底。', 5, 'task');
+      this.ui.message('message.abyss', 5, 'task');
     }
   }
 
@@ -743,16 +741,16 @@ class Game {
   _prompt() {
     const { props, player } = this;
     if (this.state !== 'playing') return [null, 0];
-    if (!this.input.locked && !DEBUG) return ['点击画面以控制视角', 0];
+    if (!this.input.locked && !DEBUG) return [this.ui.t('prompt.click'), 0];
     if (this.valveTarget >= 0) {
       const v = props.valves[this.valveTarget];
-      return [`按住 E 转动${v.name}`, v.progress];
+      return [this.ui.t('prompt.turnValve', { valve: this.ui.t(`valve.${v.kind}`) }), v.progress];
     }
     const p = player.pos;
     const guided = this.ui.settings.difficulty !== 'hard';
-    if (!this.doorOpened && p.distanceTo(DOOR_POS) < 3.2) return [guided ? '加压门锁死了。泵房的阀门也许能打开它' : '加压门锁住了', 0];
+    if (!this.doorOpened && p.distanceTo(DOOR_POS) < 3.2) return [this.ui.t(guided ? 'prompt.pressureLocked' : 'prompt.doorLocked'), 0];
     if (!this.gateOpened && Math.hypot(p.x - GATE_POS.x, p.z - GATE_POS.z) < 6 && p.z < 16) {
-      return [this.props.gateT > 0 ? '闸门正在升起……' : guided ? `闸门紧闭 · 阀门 ${this.valvesDone()}/${props.valves.length}` : '闸门紧闭', 0];
+      return [this.ui.t(this.props.gateT > 0 ? 'prompt.gateRising' : guided ? 'prompt.gateProgress' : 'prompt.gateLocked', { done: this.valvesDone(), all: props.valves.length }), 0];
     }
     return [null, 0];
   }
@@ -827,7 +825,7 @@ class Game {
     this.state = 'playing';
     this.ui.show(null);
     this.audio.respawn();
-    this.ui.message(c.start ? '你又回到了起点。' : '你在救生圈旁醒来，浑身湿冷。', 4);
+    this.ui.message(c.start ? 'message.respawnStart' : 'message.respawnCheckpoint', 4);
   }
 
   win() {
@@ -851,11 +849,11 @@ class Game {
       const s = this.stats;
       const m = Math.floor(this.playT / 60), sec = Math.floor(this.playT % 60);
       this.ui.showWin([
-        ['用时', `${m} 分 ${String(sec).padStart(2, '0')} 秒`],
-        ['被吞没', `${s.deaths} 次`],
-        ['被发现', `${s.spotted} 次`],
-        ['游过的距离', `${Math.round(s.swim)} 米`],
-        ['点亮的检查点', `${s.cps} / ${this.props.checkpoints.length}`],
+        ['stats.time', `${m} ${this.ui.t('unit.minutes')} ${String(sec).padStart(2, '0')} ${this.ui.t('unit.seconds')}`],
+        ['stats.deaths', `${s.deaths} ${this.ui.t('unit.times')}`],
+        ['stats.spotted', `${s.spotted} ${this.ui.t('unit.times')}`],
+        ['stats.distance', `${Math.round(s.swim)} ${this.ui.t('unit.meters')}`],
+        ['stats.checkpoints', `${s.cps} / ${this.props.checkpoints.length}`],
       ]);
     }
   }
@@ -908,18 +906,18 @@ class Game {
       if (pos && Number.isFinite(pos.x) && Number.isFinite(pos.y) && Number.isFinite(pos.z)) markers.push({ name, pos, small });
     };
     // Visibility flags also perform distance culling; living creatures remain on the map.
-    add('克拉肯', this.colossus);
-    for (const lurker of this.lurkers.list) add('潜伏者', lurker.pos);
-    for (const hunter of this.director.hunters) if (hunter.active) add('追猎者', hunter);
-    if (this.leviathan.active && Number.isFinite(this.leviathan.near)) add('利维坦', this.leviathan.headPos);
-    add('巨鲸', this.whale?.head);
-    add('蜘蛛蟹', this.crab?.rig.root.position);
-    add('鮟鱇', this.angler?.rig.root.position);
+    add('creature.colossus', this.colossus);
+    for (const lurker of this.lurkers.list) add('creature.lurker', lurker.pos);
+    for (const hunter of this.director.hunters) if (hunter.active) add('creature.hunter', hunter);
+    if (this.leviathan.active && Number.isFinite(this.leviathan.near)) add('creature.leviathan', this.leviathan.headPos);
+    add('creature.whale', this.whale?.head);
+    add('creature.crab', this.crab?.rig.root.position);
+    add('creature.angler', this.angler?.rig.root.position);
     for (const drifter of [this.drifter, ...this.domeDrifters]) {
       const p = drifter.bellPos;
       for (let i = 0; i < p.length; i += 3) {
         if (p[i] === 0 && p[i + 2] === 0) continue; // Not placed until its first simulation update.
-        add('漂浮群', { x: p[i], y: p[i + 1], z: p[i + 2] }, true);
+        add('creature.drifter', { x: p[i], y: p[i + 1], z: p[i + 2] }, true);
       }
     }
     return markers;

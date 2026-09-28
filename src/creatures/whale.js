@@ -253,7 +253,7 @@ export class Whale {
     }
     this.rig.toWorld(this.skull, MOUTH, this.mouth);
     this._contact(dt, player);
-    this._effects(dt, t, player);
+    this._effects(dt, t);
   }
 
   // ------------------------------------------------------------------ behaviour
@@ -459,7 +459,7 @@ export class Whale {
     if (this.onCatch) this.onCatch({ source: 'whale', maw: this.mouth.clone(), grab: player.pos.clone() });
   }
 
-  _effects(dt, t, player) {
+  _effects(dt, t) {
     const h = this.head;
     if (this.group.visible) {
       const rig = this.rig;

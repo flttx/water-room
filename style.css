@@ -69,6 +69,10 @@ html, body {
   text-shadow: 0 0 24px rgba(80, 180, 190, 0.35), 0 2px 0 rgba(0, 0, 0, 0.6);
   line-height: 1.05;
 }
+html[lang="en"] .logo {
+  font-size: clamp(44px, 5vw, 64px);
+  letter-spacing: 0.1em;
+}
 .logo small {
   display: block;
   font-family: var(--sans);
@@ -97,6 +101,12 @@ html, body {
 .load-step { color: var(--ink-dim); font-size: 13px; letter-spacing: 0.1em; min-height: 1.4em; }
 
 .title-box { max-width: 460px; animation: rise 2.4s ease-out both; }
+.title-locale-toggle {
+  position: absolute;
+  top: clamp(18px, 4vh, 36px);
+  right: clamp(16px, 4vw, 48px);
+  z-index: 1;
+}
 .tagline {
   font-family: var(--serif);
   color: #b8cac5;
@@ -209,6 +219,16 @@ legend { color: var(--ink-dim); font-size: 14px; margin-bottom: 8px; }
 .row { display: grid; grid-template-columns: 7em 1fr 3.2em; align-items: center; gap: 10px; font-size: 14px; color: var(--ink-dim); }
 .row output { text-align: right; color: var(--ink); font-variant-numeric: tabular-nums; }
 .row.check { grid-template-columns: auto 1fr; cursor: pointer; }
+.row:has(.locale-toggle) { grid-template-columns: 7em minmax(0, 1fr); }
+.locale-toggle {
+  width: auto;
+  padding: 8px 12px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-align: center;
+  white-space: nowrap;
+}
+button.locale-toggle:hover, button.locale-toggle:focus-visible { padding-left: 12px; }
 input[type="range"] { accent-color: var(--amber); width: 100%; }
 input[type="checkbox"] { accent-color: var(--amber); width: 16px; height: 16px; }
 .dialog-actions { display: flex; justify-content: flex-end; margin-top: 22px; }

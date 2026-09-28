@@ -318,15 +318,19 @@ class Glows {
   }
 }
 
-const SUB = {
-  '泵房←': 'PUMP ROOM', '中央泳池': 'LIDO', '阶梯浴场': 'TERRACE BATHS', '东蓄水池': 'EAST CISTERN',
-  '更衣室': 'CHANGING ROOMS', '救生站': 'LIFEGUARD', '排水渠': 'DRAIN', '淋浴廊': 'SHOWERS', '泵房 · 水下': 'PUMP ROOM ↓',
-  '更衣室近道': '机房积水 · 保持安静', '救生站近道': '机房积水 · 保持安静',
+const SIGN_KEYS = {
+  '泵房←': 'sign.pump', '中央泳池': 'sign.lido', '阶梯浴场': 'sign.terrace', '东蓄水池': 'sign.cistern',
+  '更衣室': 'sign.changing', '救生站': 'sign.lifeguard', '排水渠': 'sign.drain', '淋浴廊': 'sign.showers',
+  '泵房 · 水下': 'sign.underwater', '更衣室近道': 'sign.shortcut', '救生站近道': 'sign.shortcut',
+  '地下水库': 'sign.reservoir', '水库→': 'sign.reservoirArrow',
 };
 
 export class Props {
-  constructor({ scene, level, lamps, lampSys, baker }) {
+  constructor({ scene, level, lamps, lampSys, baker, locale = 'en', t = (key) => key }) {
     this.level = level;
+    this.locale = locale;
+    this.t = t;
+    this.localizedSigns = [];
     this.lamps = lamps;
     this.lampSys = lampSys;
     this.baker = baker;
@@ -423,6 +427,26 @@ export class Props {
     return mesh;
   }
 
+  _localizedSign(labelKey, options, m, w, h, parent = null, pivot = null, subKey = null) {
+    const texture = makeSignTexture(this.t(labelKey), { ...options, sub: subKey ? this.t(subKey) : undefined });
+    const mesh = this._sign(texture, m, w, h, parent, pivot);
+    this.localizedSigns.push({ mesh, labelKey, options, subKey });
+    return mesh;
+  }
+
+  setLocale(locale) {
+    if (locale === this.locale) return;
+    this.locale = locale;
+    for (const sign of this.localizedSigns) {
+      const previous = sign.mesh.material.map;
+      sign.mesh.material.map = makeSignTexture(this.t(sign.labelKey), {
+        ...sign.options, sub: sign.subKey ? this.t(sign.subKey) : undefined,
+      });
+      sign.mesh.material.needsUpdate = true;
+      previous?.dispose();
+    }
+  }
+
   // ------------------------------------------------------------------ lamp fixtures
   _fixtures() {
     const { geo, bm, bx } = this;
@@ -481,7 +505,7 @@ export class Props {
   _valves() {
     const L = this.level, { geo, bm } = this;
     const pipeC = [0.16, 0.13, 0.1], bodyC = [0.1, 0.12, 0.11], redC = [0.5, 0.05, 0.035];
-    const names = { pump: ['泵房阀门', 'PUMP VALVE'], bath: ['浴场阀门', 'BATH VALVE'], cistern: ['蓄水池阀门', 'CISTERN VALVE'], reservoir: ['水库阀门', 'RESERVOIR VALVE'] };
+    const names = { pump: 'PUMP VALVE', bath: 'BATH VALVE', cistern: 'CISTERN VALVE', reservoir: 'RESERVOIR VALVE' };
     this.valves = L.find('V').map(([tx, tz]) => {
       const [dx, dz] = L.wallDir(tx, tz);
       const [cx, cz] = L.worldCenter(tx, tz);
@@ -516,9 +540,9 @@ export class Props {
       const glow = this.glowSph.add(fr.m(0.62, h + 0.75, 0.1, 0, 0, 0, 0.05), RED, -1, 2);
       const lampPos = fr.p(0.62, h + 0.75, 0.4);
       const lamp = this.lampSys.add({ type: 'prop', x: lampPos.x, y: lampPos.y, z: lampPos.z, color: RED.slice(), intensity: 1.2, range: 4.5 });
-      const [name, sub] = names[kind];
-      const tex = makeSignTexture(name, { w: 512, h: 192, size: 78, bg: '#1d4a57', color: '#e8efe6', sub });
-      this._sign(tex, fr.m(0, h + 0.75, 0.025), 0.84, 0.32);
+      const name = names[kind];
+      this._localizedSign(`valve.${kind}`, { w: 512, h: 192, size: 78, bg: '#1d4a57', color: '#e8efe6' },
+        fr.m(0, h + 0.75, 0.025), 0.84, 0.32);
       return {
         tx, tz, name, pump: kind === 'pump', kind, pos: pivot.clone(), nx, nz,
         progress: 0, done: false, turning: false, angle: 0, wheel, glow, lamp,
@@ -581,8 +605,8 @@ export class Props {
     this.doorBase = pivot.clone();
     this.group.add(this.doorMesh);
     // stencil on the approach side travels with the door
-    const tex = makeSignTexture('加压门', { w: 512, h: 192, size: 104, color: 'rgba(220,200,120,0.9)', sub: '需启动泵房阀门' });
-    this._sign(tex, mat(cx, f0 + 1.45, cz + 0.125), 1.3, 0.49, this.doorMesh, pivot);
+    this._localizedSign('sign.pressure', { w: 512, h: 192, size: 104, color: 'rgba(220,200,120,0.9)' },
+      mat(cx, f0 + 1.45, cz + 0.125), 1.3, 0.49, this.doorMesh, pivot, 'sign.pressureSub');
     this.doorGlows = [-1, 1].map((s) => {
       bm.add(geo.box, mat(cx - 0.93, f0 + 2.3, cz + s * 0.2, 0, 0, 0, 0.12, 0.12, 0.04), [0.08, 0.08, 0.08]);
       return this.glowSph.add(mat(cx - 0.93, f0 + 2.3, cz + s * 0.23, 0, 0, 0, 0.045), RED, -1, 2);
@@ -635,10 +659,11 @@ export class Props {
       const f0 = L.floor(w.tx, w.tz), c0 = L.ceil(w.tx, w.tz);
       const y = Math.min(L.isWater(w.tx, w.tz) ? 1.35 : f0 + 2.1, c0 - 0.5);
       const fr = new Frame(w.x, y, w.z, w.nx, w.nz);
-      if (SUB[text]) {
-        const tex = makeSignTexture(text, { w: 768, h: 256, size: 100, bg: '#1d4a57', color: '#e8efe6', sub: SUB[text] });
+      if (SIGN_KEYS[text]) {
+        const options = { w: 768, h: 256, size: 100, bg: '#1d4a57', color: '#e8efe6' };
         this.bx.add(this.geo.box, fr.m(0, 0, 0.01, 0, 0, 0, 1.86, 0.66, 0.02), [0.1, 0.1, 0.1]);
-        this._sign(tex, fr.m(0, 0, 0.022), 1.8, 0.6);
+        this._localizedSign(SIGN_KEYS[text], options, fr.m(0, 0, 0.022), 1.8, 0.6,
+          null, null, text.endsWith('近道') ? 'sign.shortcutSub' : null);
       } else {
         const tex = makeSignTexture(text, { w: 512, h: 256, size: 150, color: 'rgba(18,34,40,0.88)' });
         this._sign(tex, fr.m(0, 0, 0.012), 1.3, 0.65);
@@ -646,16 +671,16 @@ export class Props {
     }
     const A = L.abyss;
     const gx = A.gateX * 2 + 1, face = A.z0 * 2;
-    const big = makeSignTexture('深渊浴场', { w: 1024, h: 256, size: 200, color: 'rgba(16,34,40,0.8)' });
-    this._sign(big, mat(gx, 15.5, face + 0.02), 10, 2.5);
-    const hint = makeSignTexture('闸门', { w: 512, h: 192, size: 96, bg: '#b58a1c', color: '#1a1406', sub: '需开启三处阀门' });
+    this._localizedSign('sign.abyss', { w: 1024, h: 256, size: 200, color: 'rgba(16,34,40,0.8)' },
+      mat(gx, 15.5, face + 0.02), 10, 2.5);
     const [gTx] = L.find('G')[0];
     const hw = this._nearWall(gTx - 2, A.z0 - 1, 1);
-    if (hw) this._sign(hint, new Frame(hw.x, L.floor(hw.tx, hw.tz) + 2.2, hw.z, hw.nx, hw.nz).m(0, 0, 0.02), 1.2, 0.45);
+    if (hw) this._localizedSign('sign.gate', { w: 512, h: 192, size: 96, bg: '#b58a1c', color: '#1a1406' },
+      new Frame(hw.x, L.floor(hw.tx, hw.tz) + 2.2, hw.z, hw.nx, hw.nz).m(0, 0, 0.02), 1.2, 0.45, null, null, 'sign.gateSub');
     const [sx, sz] = L.find('S')[0];
-    const quiet = makeSignTexture('保持安静', { w: 768, h: 256, size: 150, color: 'rgba(120,22,16,0.85)' });
     const sw = this._nearWall(sx - 2, sz - 1, 2);
-    if (sw) this._sign(quiet, new Frame(sw.x, L.floor(sw.tx, sw.tz) + 2.25, sw.z, sw.nx, sw.nz).m(0, 0, 0.02), 1.9, 0.63);
+    if (sw) this._localizedSign('sign.quiet', { w: 768, h: 256, size: 150, color: 'rgba(120,22,16,0.85)' },
+      new Frame(sw.x, L.floor(sw.tx, sw.tz) + 2.25, sw.z, sw.nx, sw.nz).m(0, 0, 0.02), 1.9, 0.63);
   }
 
   // ------------------------------------------------------------------ decor
@@ -693,7 +718,6 @@ export class Props {
   }
 
   _laneRopes() {
-    const L = this.level;
     const pool = { x0: 80, x1: 128 };
     const float = this.geo.cylLo;
     for (const r of [37, 39, 41, 47, 49]) {

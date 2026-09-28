@@ -89,9 +89,9 @@ export class Navigation {
   _targets(valves) {
     const L = this.level;
     const pending = valves.filter((v) => !v.done);
-    const entries = pending.length ? pending.map((v) => ({ tx: v.tx, tz: v.tz, name: v.name, kind: 'valve' }))
-      : L.dynamicOpen.has('G') ? this.exits.map(([tx, tz]) => ({ tx, tz, name: '出口', kind: 'exit' }))
-        : this.gates.map(([tx, tz]) => ({ tx, tz: tz + 1, name: '逃生闸门', kind: 'gate' }));
+    const entries = pending.length ? pending.map((v) => ({ tx: v.tx, tz: v.tz, name: v.kind ? `valve.${v.kind}` : v.name, kind: 'valve' }))
+      : L.dynamicOpen.has('G') ? this.exits.map(([tx, tz]) => ({ tx, tz, name: 'navigation.exit', kind: 'exit' }))
+        : this.gates.map(([tx, tz]) => ({ tx, tz: tz + 1, name: 'navigation.gate', kind: 'gate' }));
     return entries.filter((v) => Number.isInteger(v.tx) && Number.isInteger(v.tz)
       && v.tx >= 0 && v.tz >= 0 && v.tx < L.W && v.tz < L.H && !L.solid(v.tx, v.tz))
       .map((v) => {

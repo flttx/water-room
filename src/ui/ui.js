@@ -1,11 +1,12 @@
 // DOM overlay: loading, title and pause menus, settings/help dialogs, death and win screens, HUD.
 // Everything is static markup in index.html; this module only toggles and fills it (textContent only).
 import { NavigationHud } from './navigation-hud.js';
+import { applyTranslations, DEFAULT_LOCALE, normalizeLocale, translate } from '../i18n.js';
 
 const STORE_KEY = 'drowned-halls.settings';
-export const DEFAULT_SETTINGS = { difficulty: 'normal', quality: 'medium', sens: 1, fov: 72, volume: 0.8, invertY: false };
+export const DEFAULT_SETTINGS = { difficulty: 'normal', quality: 'medium', sens: 1, fov: 72, volume: 0.8, invertY: false, locale: DEFAULT_LOCALE };
 const QUALITIES = ['low', 'medium', 'high'];
-const DIFFICULTIES = { easy: '右上角显示逃生路线', normal: '方向箭头指引', hard: '无导航与任务提示，保留操作和危险反馈' };
+const DIFFICULTIES = { easy: 'difficulty.easy', normal: 'difficulty.normal', hard: 'difficulty.hard' };
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -19,6 +20,7 @@ function loadSettings() {
     const v = JSON.parse(raw);
     if (v && Object.hasOwn(DIFFICULTIES, v.difficulty)) s.difficulty = v.difficulty;
     if (QUALITIES.includes(v.quality)) s.quality = v.quality;
+    s.locale = normalizeLocale(v.locale);
     if (Number.isFinite(v.sens)) s.sens = clamp(v.sens, 0.3, 2.5);
     if (Number.isFinite(v.fov)) s.fov = clamp(v.fov, 60, 95);
     if (Number.isFinite(v.volume)) s.volume = clamp(v.volume, 0, 1);
@@ -40,6 +42,7 @@ function saveSettings(s) {
 export class UI {
   constructor() {
     this.settings = loadSettings();
+    this.locale = this.settings.locale;
     this.handlers = {};
     this.modal = null;
     this.modalTrigger = null;
@@ -63,7 +66,8 @@ export class UI {
       msg: $('hud-msg'),
       flash: $('hud-flash'),
     };
-    this.navigation = new NavigationHud();
+    applyTranslations(this.locale);
+    this.navigation = new NavigationHud((key, vars) => this.t(key, vars));
     this._bindMenus();
     this._bindSettings();
     this._syncDifficulty();
@@ -73,13 +77,42 @@ export class UI {
   /** name → callback: start, resume, restart, quit, again, settings(settings), hover, click */
   on(name, fn) { this.handlers[name] = fn; }
   _emit(name, arg) { if (this.handlers[name]) this.handlers[name](arg); }
+  t(key, vars) { return translate(this.locale, key, vars); }
+  _messageText({ key, vars }) {
+    const localizedVars = { ...vars };
+    if (localizedVars.valve?.startsWith('valve.')) localizedVars.valve = this.t(localizedVars.valve);
+    return this.t(key, localizedVars);
+  }
+
+  setLocale(locale) {
+    this.locale = normalizeLocale(locale);
+    this.settings.locale = this.locale;
+    applyTranslations(this.locale);
+    for (const button of document.querySelectorAll('[data-locale-toggle]')) {
+      const nextLocale = this.locale === 'en' ? 'zh-CN' : 'en';
+      button.textContent = this.t(nextLocale === 'en' ? 'ui.langEnglish' : 'ui.langChinese');
+      button.setAttribute('aria-label', this.t(nextLocale === 'en' ? 'ui.switchToEnglish' : 'ui.switchToChinese'));
+    }
+    this._syncDifficulty();
+    if (this.objective) $('pause-objective').textContent = this.t(this.objective.key, this.objective.vars);
+    if (this.death) {
+      $('death-title').textContent = this.t(this.death.title);
+      $('death-sub').textContent = this.t(this.death.sub);
+    }
+    if (this.winStats) this.showWin(this.winStats);
+    if (this.messageState && !(this.messageState.kind === 'task' && this.settings.difficulty === 'hard')) {
+      this.hud.msg.textContent = this._messageText(this.messageState);
+    }
+    saveSettings(this.settings);
+    this._emit('settings', this.settings);
+  }
 
   // ------------------------------------------------------------------ screens
   setLoading(p, text) {
     const v = Math.round(clamp(p, 0, 1) * 100);
     $('load-fill').style.width = `${v}%`;
     $('load-bar').setAttribute('aria-valuenow', String(v));
-    if (text) $('load-step').textContent = text;
+    if (text) $('load-step').textContent = this.t(text);
   }
 
   /** Show one full-screen layer (or none) and the HUD when playing. */
@@ -96,21 +129,23 @@ export class UI {
 
   showError() { this.show('error'); }
 
-  setObjective(text) { $('pause-objective').textContent = text; }
+  setObjective(key, vars = {}) { this.objective = { key, vars }; $('pause-objective').textContent = this.t(key, vars); }
 
   showDeath(title, sub) {
-    $('death-title').textContent = title;
-    $('death-sub').textContent = sub;
+    this.death = { title, sub };
+    $('death-title').textContent = this.t(title);
+    $('death-sub').textContent = this.t(sub);
     this.show('death');
   }
 
   /** stats: [[label, value], ...] */
   showWin(stats) {
+    this.winStats = stats;
     const dl = $('win-stats');
     dl.replaceChildren();
     for (const [k, v] of stats) {
       const dt = document.createElement('dt');
-      dt.textContent = k;
+      dt.textContent = this.t(k);
       const dd = document.createElement('dd');
       dd.textContent = v;
       dl.append(dt, dd);
@@ -224,7 +259,9 @@ export class UI {
         fov: clamp(Number(f.elements.fov.value) || 72, 60, 95),
         volume: clamp(Number(f.elements.volume.value), 0, 1),
         invertY: f.elements.invertY.checked,
+        locale: this.locale,
       };
+      if (this.settings.locale !== this.locale) this.setLocale(this.settings.locale);
       this._outputs();
       this._syncDifficulty();
       saveSettings(this.settings);
@@ -232,6 +269,9 @@ export class UI {
     };
     f.addEventListener('input', apply);
     f.addEventListener('change', apply);
+    for (const button of document.querySelectorAll('[data-locale-toggle]')) {
+      button.addEventListener('click', () => this.setLocale(this.locale === 'en' ? 'zh-CN' : 'en'));
+    }
     $('title-difficulty').addEventListener('change', (e) => {
       if (!Object.hasOwn(DIFFICULTIES, e.target.value)) return;
       this.settings.difficulty = e.target.value;
@@ -244,18 +284,19 @@ export class UI {
   _syncDifficulty() {
     const difficulty = this.settings.difficulty;
     for (const radio of document.querySelectorAll('input[name="difficulty"]')) radio.checked = radio.value === difficulty;
-    for (const id of ['title-difficulty-note', 'settings-difficulty-note']) $(id).textContent = DIFFICULTIES[difficulty];
+    for (const id of ['title-difficulty-note', 'settings-difficulty-note']) $(id).textContent = this.t(DIFFICULTIES[difficulty]);
     for (const el of document.querySelectorAll('[data-task-hint]')) el.hidden = difficulty === 'hard';
     if (difficulty === 'hard' && this.msgKind === 'task') this.clearMessage();
     this.navigation.hide();
   }
 
   // ------------------------------------------------------------------ HUD
-  message(text, seconds = 4, kind = 'status') {
+  message(key, seconds = 4, kind = 'status', vars = {}) {
     if (kind === 'task' && this.settings.difficulty === 'hard') return;
     this.msgKind = kind;
+    this.messageState = { key, vars, kind };
     const m = this.hud.msg;
-    m.textContent = text;
+    m.textContent = this._messageText(this.messageState);
     m.classList.add('show');
     this.msgTimer = seconds;
   }
@@ -263,6 +304,7 @@ export class UI {
   clearMessage() {
     this.msgTimer = 0;
     this.msgKind = null;
+    this.messageState = null;
     this.hud.msg.textContent = '';
     this.hud.msg.classList.remove('show');
   }
