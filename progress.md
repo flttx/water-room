@@ -1,0 +1,91 @@
+# 进度
+
+## 本轮：全怪物动作与路线检查
+
+- [x] 覆盖八类怪物，区分巡游、固定伏击和出场演出。
+- [x] 潜伏者尾部接墙平滑与远距重新进入视野；漂浮群转弯切线连续；利维坦自然生成首帧摆姿、入口/出口高度平滑。
+- [x] 追猎者寻路冷却、出生朝向、中间路点与低速转向局部修复；蜘蛛蟹识别身体阻塞、沿已走方向退让、足部皮肤留量修正。
+- [ ] 持续运动尚未全部通过：追猎者狭口、巨鲸尾鳍绕柱、蜘蛛蟹西侧停滞，以及克拉肯自然下潜仍有问题。未保留无效的通用恢复实验，也未删除或放宽碰撞约束。
+
+已通过：潜伏者八个体固定/变化帧率与完整攻击回位；漂浮群/利维坦 18 个完整周期；鮟鱇正面/斜向攻击回位；16 项导航；三档难度、实时标记与入口巡游浏览器回归。Chrome/WebGL 对利维坦和漂浮群抽检 8 帧，浏览器错误 0；截图不能替代主观动画流畅性验收。
+
+| 最终检查 | 结果 |
+| --- | --- |
+| `node tools/hunter-motion-check.mjs --regression` | 出生/重置、冷却、折角保留、低速转头通过 |
+| `node tools/hunter-motion-check.mjs` | FAIL：两处追猎者狭口连续停滞 32.32 / 53.28 秒；克拉肯自然周期 GLB / fallback 下潜停滞 49.43 / 38.90 秒 |
+| `node tools/dome-motion-check.mjs --only=whale` / `--only=crab` | FAIL：最长连续停滞 94.37 / 27.53 秒；几何采样均无穿透 |
+| `node tools/dome-motion-check.mjs --only=angler` | 两次自然触发攻击与回位通过 |
+| `node tools/creature-check.mjs` | 稳定源码的追猎者与触手固定/变化帧率回归通过 |
+| `node tools/creature-collision-check.mjs --strict` | 36 个几何场景、5 项攻击遮挡通过；稳定源码另重跑 `--only=colossus` 通过 |
+| `node tools/lurker-motion-check.mjs` / `lurker-patrol-check.mjs` / `shortcut-check.mjs` | 尾部连续性、两轮入口巡游、自然诱敌和通行通过 |
+| `node tools/swimmer-motion-check.mjs` / `swimmer-visual-check.mjs` | 18 项完整周期与真实 WebGL 抽检通过 |
+| `node tools/navigation-check.mjs` / `difficulty-check.mjs` | 16 项导航及难度、实时标记、入口巡游浏览器回归通过 |
+| `node --check` / `git diff --check` / `npm run build` | 通过；无 lint 脚本，保留既有大 bundle 提示 |
+
+八类检查完成，局部修复已验证；整体持续运动尚未全部通过。下一步应处理长身体转弯路线与场地净空、蟹西侧落脚恢复、克拉肯下潜附肢约束。几何碰撞通过不代表路线不会卡住，未用瞬移或放宽约束掩盖失败。
+
+## 本轮完成：排水渠入口潜伏者巡游
+
+- [x] 第 4 只潜伏者在入口与内部安全点之间慢速往返，内部停留约 7 秒。
+- [x] 扩出一格掉头凹口，保留近身/噪声伏击，攻击恢复后接续巡游；reset 回入口。
+- [x] 实测玩家观察离开后正常游过入口并转入北段，其他 7 只仍守点。
+
+| 本轮检查 | 结果 |
+| --- | --- |
+| `node tools/lurker-patrol-check.mjs` | 两次完整往返、119 次身体和链段几何采样、攻击恢复、重置通过；玩家等待 12.55 s 后用 8.33 s 正常游过入口，无抓捕 |
+| `node tools/creature-collision-check.mjs --strict` | 36 个几何场景、5 项攻击遮挡，0 问题 |
+| `node tools/navigation-check.mjs` / `node tools/shortcut-check.mjs` | 全图 16 项及此前机房捷径回归通过 |
+| `node tools/difficulty-check.mjs` | 三档难度回归通过；新增实际巡游位移、小地图刷新与入口前后截图检查，无浏览器错误 |
+| `node --check` / `git diff --check` / `npm run build` | 通过；无 lint 脚本，保留既有大 bundle 警告 |
+
+采样中根部最大单帧位移 0.014 m；尾尖掉头时最大单帧 0.517 m，仅作为原链模拟的观测值，未承诺消除所有附肢摆动。通行验证基于等待怪物深入后通过，贴近或制造噪声仍会引发攻击。下一步：刷新游戏，在入口观察诱光退入内部后通行。
+
+## 本轮完成：机房伏击捷径
+
+- [x] 打通机房、西侧水渠和更衣室原死路，保留原有绕行路线。
+- [x] 两端增加目的地与积水警示牌，小地图和导航随地形同步更新。
+- [x] 验证真实玩家双向穿行、攀岸、距离收益与诱敌后安全穿行。
+
+| 本轮检查 | 结果 |
+| --- | --- |
+| `node tools/shortcut-check.mjs` | 更衣室节省 40 m、浴场阀门节省 32 m；两条旧绕行及捷径双向实走通过；直冲会被抓，蹲行诱敌后撤退、沿南侧穿行并攀出成功 |
+| `node tools/navigation-check.mjs` | 全图 16 项通过 |
+| `node tools/creature-collision-check.mjs --strict` | 36 个几何场景、5 项攻击遮挡通过，0 问题 |
+| `node tools/difficulty-check.mjs` | 通过；新增浏览器捷径路线检查及真实入口截图，无浏览器错误 |
+| `node --check` / `git diff --check` / `npm run build` | 通过；项目无 lint 脚本，构建保留既有大 bundle 警告 |
+
+安全穿行验证使用真实 Player、完整 Lurkers manager 和实际移动噪音，没有修改敌人状态、冷却或冻结玩家。只证明一条可执行策略，不承诺任意冲刺走法都能通过。下一步：刷新游戏，从检查点旁“更衣室近道”入口体验。
+
+## 本轮完成：路线精度与怪物位置
+
+- [x] 修复路线回折、格中心回拉与墙角连接问题。
+- [x] 建筑细节地图与简单模式实时怪物标记。
+- [x] 自动回归、桌面/窄屏视觉确认与构建。
+
+| 本轮检查 | 结果 |
+| --- | --- |
+| `node tools/navigation-check.mjs` | 16 项通过；四条真实玩家路线和阀门交互验收通过 |
+| `node tools/difficulty-check.mjs` | 地图 480 格投影无偏差、门变化、有效路段、怪物实时坐标与生命周期、三档原有功能通过；无浏览器错误 |
+| 修改模块及测试 `node --check` / `git diff --check` | 通过 |
+| `npm run build` | 通过；既有大 bundle 警告 |
+| 地图视觉检查 | 桌面、窄屏通过；已修正小标记尺寸和“80 米”宽度图例 |
+
+项目仍未配置 lint；设计检测器仅报告原有两处布局动画警告。路线按建筑通行条件规划，不自动绕开怪物；地图显示附近范围。下一步：刷新游戏并选择简单模式体验。
+
+- [x] 确认难度定义和困难模式提示范围。
+- [x] 完成路线与设置/HUD 实现。
+- [x] 完成回归、浏览器检查与构建。
+
+## 验证结果
+
+| 检查 | 结果 |
+| --- | --- |
+| `node tools/navigation-check.mjs` | 13 项通过；真实 Player 控制器走完四条阀门路线，无卡住或氧气耗尽 |
+| `node tools/difficulty-check.mjs` | 三档切换、旧存储默认、刷新持久化、任务完成/闸门/重置/复活、困难提示范围、三档焦点循环、桌面/窄屏通过，无浏览器错误 |
+| 修改模块与新测试的 `node --check` | 通过 |
+| `npm run build` | 通过；保留既有大 bundle 警告 |
+| `git diff --check` | 通过 |
+| 独立 UI 审查 | 主界面截图及焦点循环问题均 resolved；无剩余必修项 |
+
+项目未配置 lint。设计检测器只发现原有加载条宽度与菜单缩进动画两处警告，未更改无关样式。
+路线依据地形和门状态计算，不动态规避怪物。下一步：刷新游戏，在开始界面或设置中选择难度。

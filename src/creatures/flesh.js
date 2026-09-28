@@ -431,8 +431,8 @@ export class Chain {
   point(i, out) { const b = i * 3; return out.set(this.p[b], this.p[b + 1], this.p[b + 2]); }
 }
 
-/** Protect spans as well when the creature's body collider guarantees an unobstructed root. */
-export function collideChain(level, c, protectSpans = false, maxSpeed = Infinity) {
+/** Protect spans when the body collider guarantees a clear root; slack preserves contracted segments. */
+export function collideChain(level, c, protectSpans = false, maxSpeed = Infinity, slack = false) {
   const p = c.p, old = c.o;
   // A submerged point beside a deck must leave through its side, rather than teleport to
   // the deck's floor. Alternate contacts and lengths so the skin cannot stretch apart.
@@ -469,7 +469,7 @@ export function collideChain(level, c, protectSpans = false, maxSpeed = Infinity
         old[b] += ex * inward; old[b + 1] += ey * inward; old[b + 2] += ez * inward;
       }
     }
-    c.constrainLengths();
+    c.constrainLengths(slack);
   }
   if (!protectSpans) return;
   // Keep both the skin and the spans between nodes outside terrain. Length restoration

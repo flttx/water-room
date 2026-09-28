@@ -251,10 +251,13 @@ export class Hunter {
     this.path = null;
     this.pathI = 0;
     this.repathT = 0;
+    this.noPathT = 0;
     this.state = 'patrol';
     this._pickPatrol(player);
     // face along the first leg of the patrol route
-    if (this.path && this.path.length > 1) this.yaw = Math.atan2(this.path[1][0] - x, this.path[1][1] - z);
+    this._goTo(0, this.patrolX, this.patrolZ, 0, 8);
+    const firstLeg = this.path?.[this.pathI];
+    if (firstLeg) this.yaw = Math.atan2(firstLeg[0] - x, firstLeg[1] - z);
     else this.yaw = this.rand() * Math.PI * 2;
     // The entire body must fit at spawn, including the mantle behind the head.
     const firstYaw = this.yaw;
@@ -683,7 +686,7 @@ export class Hunter {
     const L = this.level;
     if (this.path && this.repathT <= 0 && Math.hypot(gx - this.pathGX, gz - this.pathGZ) > 4) this.path = null;
     if (!this.path) {
-      if (this.noPathT > 0) return true;
+      if (this.noPathT > 0) return false;
       const from = L.nearestCore(this.x, this.z, 6, this.allow);
       const to = L.nearestCore(gx, gz, maxR, this.allow);
       this.path = from >= 0 && to >= 0 ? L.findPath(from, to, this.allow) : null;
@@ -697,7 +700,7 @@ export class Hunter {
       }
     }
     let wp = this.path[this.pathI];
-    while (wp && Math.hypot(wp[0] - this.x, wp[1] - this.z) < (this.pathI === this.path.length - 1 ? 1.2 : 2.4)) {
+    while (wp && Math.hypot(wp[0] - this.x, wp[1] - this.z) < (this.pathI === this.path.length - 1 ? 1.2 : 0.6)) {
       this.pathI++;
       wp = this.path[this.pathI];
     }
@@ -705,7 +708,14 @@ export class Hunter {
     // ease off into the final waypoint
     const left = Math.hypot(wp[0] - this.x, wp[1] - this.z);
     const last = this.pathI === this.path.length - 1;
-    this._steer(dt, wp[0], wp[1], last ? Math.min(speed, 0.6 + left * 0.6) : speed);
+    let heading = null;
+    if (!last && left < 2.4) {
+      const next = this.path[this.pathI + 1];
+      const incoming = Math.atan2(wp[0] - this.x, wp[1] - this.z);
+      const outgoing = Math.atan2(next[0] - wp[0], next[1] - wp[1]);
+      heading = incoming + wrapAngle(outgoing - incoming) * (1 - left / 2.4);
+    }
+    this._steer(dt, wp[0], wp[1], last ? Math.min(speed, 0.6 + left * 0.6) : speed, heading);
     if (this.stuckT > 1.5) {
       this.stuckT = 0;
       this.path = null;
@@ -719,17 +729,17 @@ export class Hunter {
     if (rate > 0) this._turnTo(Math.atan2(x - this.x, z - this.z), dt, rate);
   }
 
-  _steer(dt, tx, tz, speed) {
+  _steer(dt, tx, tz, speed, heading = null) {
     let dx = tx - this.x, dz = tz - this.z;
     const d = Math.hypot(dx, dz);
     if (d > 1e-3) { dx /= d; dz /= d; } else { dx = dz = 0; }
     const k = Math.min(1, dt * 2.2);
     this.vx += (dx * speed - this.vx) * k;
     this.vz += (dz * speed - this.vz) * k;
-    this._advance(dt);
+    this._advance(dt, heading ?? (speed > 0 && d > 1e-3 ? Math.atan2(dx, dz) : null));
   }
 
-  _advance(dt) {
+  _advance(dt, heading = null) {
     const mul = 0.75 + 0.5 * this.jetC;
     const nx = this.x + this.vx * dt * mul, nz = this.z + this.vz * dt * mul;
     if (this._bodyOk(nx, nz)) {
@@ -744,7 +754,7 @@ export class Hunter {
       this.stuckT += dt;
     }
     const sp = Math.hypot(this.vx, this.vz);
-    if (sp > 0.3) this._turnTo(Math.atan2(this.vx, this.vz), dt, 1.2 + sp * 0.35);
+    if (heading !== null || sp > 0.3) this._turnTo(heading ?? Math.atan2(this.vx, this.vz), dt, 1.2 + sp * 0.35);
     // bank into turns
     this.roll += (clamp(this._turnRate * -0.25, -0.35, 0.35) - this.roll) * Math.min(1, dt * 2);
   }
@@ -790,6 +800,13 @@ export class Hunter {
     this._savePose(this.goalPose, t);
     const wanted = Math.hypot(this.goalPose[0] - x, this.goalPose[2] - z);
     if (this._sweepBody() < 1) {
+      // A nose against the wall may still have room to turn. Try that before
+      // translation-only sliding, or collision damping can permanently lock its heading.
+      const gx = this.goalPose[0], gy = this.goalPose[1], gz = this.goalPose[2];
+      this.goalPose[0] = this.safePose[0]; this.goalPose[1] = this.safePose[1]; this.goalPose[2] = this.safePose[2];
+      this._sweepBody();
+      this.goalPose[0] = gx; this.goalPose[1] = gy; this.goalPose[2] = gz;
+      if (this._sweepBody() === 1) return;
       // Keep sliding when there is room to move but not yet enough room to turn.
       for (let i = 3; i < this.goalPose.length; i++) this.goalPose[i] = this.safePose[i];
       if (this._sweepBody() < 1) {

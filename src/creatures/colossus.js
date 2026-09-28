@@ -3,7 +3,7 @@ import { sculptBody, EyeSet, buildTeeth, layoutEyes, makeSkinMaterial, TentacleB
 import { pointsMaterial } from '../render/fx.js';
 import { mulberry32 } from '../render/textures.js';
 import { DECK_Y } from '../level/level.js';
-import { attackClear, abyssTerrain, PoseGuard, sphereClear } from './collision.js';
+import { attackClear, abyssTerrain, PoseGuard, sphereClear, sphereTravel } from './collision.js';
 import { ABYSS } from '../level/mapdata.js';
 import { exposure, sight, awarenessRate, AWARE_SUSPICIOUS, AWARE_CHASE } from './senses.js';
 import { modelSkin, disposeModelSkin, castOnto } from './tripo.js';
@@ -136,8 +136,8 @@ const BZ = 28;
 const _bz = new Float32Array((BZ + 1) * 3);
 const _bl = new Float32Array(BZ + 1);
 
-/** Lay chain targets along a cubic Bezier by arc length; points past its end continue horizontally (sinking in water). */
-function poseAlong(chain, out, p0, p1, p2, p3, dirX, dirZ, sink) {
+/** Distribute the arm along the curve, contracting when the target is close. */
+function poseAlong(chain, out, p0, p1, p2, p3) {
   for (let s = 0; s <= BZ; s++) {
     const t = s / BZ, u = 1 - t;
     const a = u * u * u, b = 3 * u * u * t, c = 3 * u * t * t, d = t * t * t;
@@ -149,15 +149,8 @@ function poseAlong(chain, out, p0, p1, p2, p3, dirX, dirZ, sink) {
   const L = _bl[BZ];
   let j = 0;
   for (let i = 0; i < chain.n; i++) {
-    const s = i * chain.seg;
+    const s = i / (chain.n - 1) * Math.min(L, chain.length);
     const o = i * 3;
-    if (s >= L) {
-      const e = s - L;
-      out[o] = p3.x + dirX * e;
-      out[o + 1] = p3.y - e * sink;
-      out[o + 2] = p3.z + dirZ * e;
-      continue;
-    }
     while (j < BZ - 1 && _bl[j + 1] < s) j++;
     const f = (s - _bl[j]) / Math.max(1e-6, _bl[j + 1] - _bl[j]);
     out[o] = _bz[j * 3] + (_bz[j * 3 + 3] - _bz[j * 3]) * f;
@@ -355,8 +348,9 @@ export class Colossus {
         rootW: new THREE.Vector3(),
         outX: 0, outZ: 1,
         mode: 'sink', t: 0, cool: 0,
-        goal: new THREE.Vector3(), idleGoal: new THREE.Vector3(), idleDeck: false, idleT: 0,
-        target: new THREE.Vector3(), splashed: false, hit: false, surfT: 0,
+        goal: new THREE.Vector3(), idleGoal: new THREE.Vector3(), idleT: 0,
+        target: new THREE.Vector3(), strokeStart: new THREE.Vector3(), splashed: false, hit: false, surfT: 0,
+        h1: -3, h2: 1,
         targets: new Float32Array(22 * 3),
         seed: rand() * 50,
       };
@@ -444,9 +438,10 @@ export class Colossus {
   _resetLimbs() {
     for (const a of this.arms) {
       a.mode = 'sink';
-      a.cool = 0;
+      a.t = 0; a.cool = 0; a.h1 = -3; a.h2 = 1;
       this._armRoot(a);
       a.chain.reset(a.rootW.x, a.rootW.y, a.rootW.z, a.outX * 0.5, -0.86, a.outZ * 0.5);
+      a.chain.tip(a.goal);
     }
     for (const f of [...this.feelers, ...this.beard]) {
       this._headPoint(f.rootLocal, f.w, _a);
@@ -624,13 +619,15 @@ export class Colossus {
         for (const a of this.arms) {
           if (a.mode !== 'idle' || a.cool > 0) continue;
           const d = Math.hypot(a.rootW.x - player.pos.x, a.rootW.z - player.pos.z);
-          if (d < a.chain.length + 1.5 && d < bestD) { best = a; bestD = d; }
+          this._slamPoint(_a, player.pos.x, player.pos.z);
+          if (d < a.chain.length * 0.85 && d < bestD && this._armPoseClear(a, _a, 5, 0.6)) { best = a; bestD = d; }
         }
         if (best) {
           best.mode = 'raise';
           best.t = 0;
           best.splashed = false;
           best.hit = false;
+          best.chain.tip(best.strokeStart);
           this._slamPoint(best.target, player.pos.x, player.pos.z);
           this.attackCool = 1.4 + this.rand() * 1.0;
           this.voice.growl();
@@ -707,7 +704,12 @@ export class Colossus {
     this.root.position.set(this.x, this.y, this.z);
     this.root.rotation.set(0, this.yaw, 0);
     this.headPivot.rotation.set(this.pitch + Math.sin(t * 0.31) * 0.025, Math.sin(t * 0.17) * 0.04, Math.sin(t * 0.23) * 0.035, 'YXZ');
-    const br = 1 + 0.012 * Math.sin(t * 0.8);
+    // Keep the head upright and at rest size while it clears the narrow shaft.
+    if (this.state === 'rising') {
+      this.root.rotation.y = this.zone.yaw;
+      this.headPivot.quaternion.copy(_upright);
+    }
+    const br = 1 + (this.state === 'rising' ? 0 : 0.012 * Math.sin(t * 0.8));
     this.headMesh.scale.set(br, br, br);
     if (this.trunkMesh) this.trunkMesh.rotation.set(Math.sin(t * 0.13) * 0.03, 0, Math.sin(t * 0.2) * 0.03);
     this.root.updateMatrixWorld(true);
@@ -799,17 +801,47 @@ export class Colossus {
       if (d < 9 || d > a.chain.length * 0.78) continue;
       const cos = (dx * a.outX + dz * a.outZ) / d;
       if (cos < 0.45) continue;
-      const s = cos + (c.deck ? 0.6 : 0) + this.rand() * 0.5;
+      _a.set(c.x, c.deck ? DECK_Y + 0.5 : -0.6, c.z);
+      if (!this._armPoseClear(a, _a, 3.5, 1)) continue;
+      const s = cos + this.rand() * 0.3;
       if (s > bestS) { bestS = s; best = c; }
     }
     if (best) {
-      a.idleGoal.set(best.x + (this.rand() - 0.5) * 1.2, best.deck ? DECK_Y + 0.3 : -0.2, best.z + (this.rand() - 0.5) * 1.2);
-      a.idleDeck = best.deck;
+      a.idleGoal.set(best.x, best.deck ? DECK_Y + 0.5 : -0.6, best.z);
     } else {
-      a.idleGoal.set(rw.x + a.outX * 13, -0.3, rw.z + a.outZ * 13);
-      a.idleDeck = false;
+      // Keep the last reachable tip if the arm faces a wall; never invent a point beyond it.
+      a.chain.tip(a.idleGoal);
+      for (let reach = 10; reach >= 2; reach -= 2) {
+        _a.set(rw.x + a.outX * reach, Math.min(-0.6, rw.y), rw.z + a.outZ * reach);
+        if (this._armPoseClear(a, _a, 3.5, 1)) { a.idleGoal.copy(_a); break; }
+      }
     }
     a.idleT = 7 + this.rand() * 7;
+  }
+
+  _armPose(a, goal, h1, h2) {
+    const rw = a.rootW, c = a.chain;
+    const spare = Math.max(0, c.length * 0.96 - rw.distanceTo(goal));
+    h1 = Math.sign(h1) * Math.min(Math.abs(h1), spare * 0.55 + 1);
+    h2 = Math.min(h2, spare * 0.45 + 0.5);
+    const dx = goal.x - rw.x, dz = goal.z - rw.z, dl = Math.hypot(dx, dz) || 1;
+    _p0.copy(rw);
+    _p1.set(rw.x + a.outX * 3, rw.y + h1, rw.z + a.outZ * 3);
+    _p2.set(goal.x - dx / dl * 2, goal.y + h2, goal.z - dz / dl * 2);
+    _p3.copy(goal);
+    poseAlong(c, a.targets, _p0, _p1, _p2, _p3);
+  }
+
+  _armPoseClear(a, goal, h1, h2) {
+    this._armPose(a, goal, h1, h2);
+    const p = a.targets, c = a.chain;
+    // An unreachable endpoint or a blocked curve cannot be an idle/attack destination.
+    if (Math.hypot(p[p.length - 3] - goal.x, p[p.length - 2] - goal.y, p[p.length - 1] - goal.z) > 0.1) return false;
+    for (let i = 1; i < c.n; i++) {
+      const b = i * 3, prev = b - 3;
+      if (sphereTravel(this.terrain, p[prev], p[prev + 1], p[prev + 2], p[b], p[b + 1], p[b + 2], c.r[i - 1] + 0.1 + c.seg * 0.125) < 1) return false;
+    }
+    return true;
   }
 
   _updateArm(a, dt, t, player) {
@@ -820,74 +852,67 @@ export class Colossus {
     const rw = a.rootW;
     const sleeping = this.state === 'dormant' || this.state === 'sinking';
     if (sleeping && a.mode !== 'sink') { a.mode = 'sink'; a.t = 0; }
-    if (!sleeping && a.mode === 'sink' && (this.state === 'watch' || this.t > RISE_TIME * 0.2 + a.k * 0.5)) {
+    if (!sleeping && a.mode === 'sink' && rw.y > -8 && (this.state === 'watch' || this.t > RISE_TIME * 0.65 + a.k * 0.3)) {
       a.mode = 'idle';
       a.idleT = 0;
-      a.goal.set(rw.x + a.outX * 8, -3, rw.z + a.outZ * 8);
+      c.tip(a.goal);
     }
-    let h1 = 7, h2 = 3, rate = 2.2, sink = 0.25, wob = 1;
+    let h1 = 3.5, h2 = 1, rate = 2.2, wob = 0.35;
     const goal = a.goal;
     switch (a.mode) {
       case 'sink':
-        goal.set(rw.x + a.outX * 8, rw.y - 9, rw.z + a.outZ * 8);
-        h1 = -3; h2 = 1; rate = 1.2; sink = 0.6;
+        // Trail inside the shaft during ascent, so submerged arms cannot hook its lower rim.
+        goal.lerp(_a.set(rw.x + a.outX * 2, rw.y - c.length * 0.8, rw.z + a.outZ * 2), 1 - Math.exp(-dt * 2));
+        h1 = -3; h2 = 1; rate = 1.2;
         break;
       case 'idle': {
         a.idleT -= dt;
         if (a.idleT <= 0) this._pickIdle(a);
-        const dist = goal.distanceTo(a.idleGoal);
         goal.lerp(a.idleGoal, 1 - Math.exp(-dt * 0.45));
-        h1 = 7; h2 = 2.5 + Math.min(6, dist * 0.7);
-        sink = a.idleDeck ? 0 : 0.25;
         rate = 2.4;
         break;
       }
       case 'raise': {
         if (a.t < 1.5 * 0.6 && !this.caught) this._slamPoint(a.target, player.pos.x, player.pos.z);
         const dx = a.target.x - rw.x, dz = a.target.z - rw.z, dl = Math.hypot(dx, dz) || 1;
-        goal.set(a.target.x - (dx / dl) * 3, a.target.y + 12, a.target.z - (dz / dl) * 3);
+        _a.set(a.target.x - (dx / dl) * 3, a.target.y + 9, a.target.z - (dz / dl) * 3);
+        goal.lerpVectors(a.strokeStart, _a, smooth(Math.min(1, a.t / 1.5)));
         h1 = 9; h2 = 2; rate = 5; wob = 0.35;
         a.surfT -= dt;
         if (a.surfT <= 0) { a.surfT = 0.28; this.water.addRipple(a.target.x, a.target.z, 0.9); }
-        if (a.t > 1.5) { a.mode = 'slam'; a.t = 0; }
+        // A slow or obstructed arm must finish lifting before the downward stroke starts.
+        if (a.t > 1.5 && c.tip(_b).distanceTo(goal) < 2) {
+          a.mode = 'slam'; a.t = 0; a.strokeStart.copy(goal);
+        } else if (a.t > 3.5) {
+          a.mode = 'idle'; a.t = 0; a.cool = 2.6; a.idleT = 0;
+        }
         break;
       }
       case 'slam':
-        goal.copy(a.target);
-        h1 = 5; h2 = 1.2; rate = 18; wob = 0.1; sink = 0.15;
-        if (a.t > 0.2 && !a.splashed) this._impact(a, player);
-        if (a.t > 0.2 && a.t < 0.6 && !a.hit) this._checkHit(a, player);
+        goal.lerpVectors(a.strokeStart, a.target, smooth(Math.min(1, a.t / 0.5)));
+        h1 = 5; h2 = 1.2; rate = 18; wob = 0.1;
         if (a.t > 0.5) { a.mode = 'lie'; a.t = 0; }
         break;
       case 'lie':
         goal.copy(a.target);
-        h1 = 5; h2 = 0.6; rate = 4; wob = 0.4; sink = 0.15;
-        if (a.t < 0.15 && !a.hit) this._checkHit(a, player);
+        h1 = 5; h2 = 0.6; rate = 4; wob = 0.1;
         if (a.t > 1.3) {
           a.mode = 'idle';
           a.cool = 2.6 + this.rand() * 1.5;
           a.idleGoal.copy(a.target);
-          a.idleDeck = a.target.y > 0;
           a.idleT = 1.5;
         }
         break;
       default:
         break;
     }
-    // keep the curve's extra length within the arm's reach
-    const chord = rw.distanceTo(goal);
-    const spare = Math.max(0, c.length * 0.96 - chord);
-    h1 = Math.sign(h1) * Math.min(Math.abs(h1), spare * 0.55 + 1);
-    h2 = Math.min(h2, spare * 0.45 + 0.5);
+    const bend = 1 - Math.exp(-dt * (a.mode === 'slam' ? 12 : 3));
+    a.h1 += (h1 - a.h1) * bend;
+    a.h2 += (h2 - a.h2) * bend;
+    this._armPose(a, goal, a.h1, a.h2);
     let dx = goal.x - rw.x, dz = goal.z - rw.z;
     const dl = Math.hypot(dx, dz) || 1;
     dx /= dl; dz /= dl;
-    _p0.copy(rw);
-    _p1.set(rw.x + a.outX * 3, rw.y + h1, rw.z + a.outZ * 3);
-    _p2.set(goal.x - dx * 2, goal.y + h2, goal.z - dz * 2);
-    _p3.copy(goal);
-    poseAlong(c, a.targets, _p0, _p1, _p2, _p3, dx, dz, sink);
-
     c.integrate(dt, 0.9, 0, -1.5, 0);
     const k = 1 - Math.exp(-rate * dt);
     const T = a.targets, nz = this.noise;
@@ -900,9 +925,14 @@ export class Colossus {
       const oz = (nz(i * 0.33 + a.seed, t * 0.33, 17.5) - 0.5) * 2 * amp;
       c.pull(i, T[o] + ox, T[o + 1] + oy, T[o + 2] + oz, k);
     }
-    const ux = a.outX * 0.5, uz = a.outZ * 0.5;
-    c.constrain(rw.x, rw.y, rw.z, ux, 0.86, uz, 0.08);
-    collideChain(this.terrain, c, true, 28);
+    // Follow the curve's tangent, including the downward tangent of a sleeping arm.
+    _a.fromArray(T, 3).sub(_b.fromArray(T)).multiplyScalar(1 / c.seg);
+    c.constrain(rw.x, rw.y, rw.z, _a.x, _a.y, _a.z, 0.04, true);
+    collideChain(this.terrain, c, true, a.mode === 'slam' || a.mode === 'lie' ? 28 : 12, true);
+    if (a.mode === 'slam' || a.mode === 'lie') {
+      if (!a.splashed && c.tip(_a).distanceTo(a.target) < 1.6) this._impact(a, player);
+      if (!a.hit) this._checkHit(a, player);
+    }
     c.frames(-dx, 0, -dz);
     this.armBundle.set(a.k, c);
   }
@@ -966,8 +996,8 @@ export class Colossus {
         c.p[o + 1] += ((c.p[o + 1] < 0 ? 0.6 : -7) + (nz(s, t * 0.5, 7.5) - 0.5) * w) * dt2;
         c.p[o + 2] += (nz(s, t * 0.5, 13.5) - 0.5) * w * dt2 * 2;
       }
-      c.constrain(_a.x, _a.y, _a.z, _b.x, _b.y, _b.z, stiff);
-      collideChain(this.terrain, c, true, 28);
+      c.constrain(_a.x, _a.y, _a.z, _b.x, _b.y, _b.z, stiff, true);
+      collideChain(this.terrain, c, true, 12, true);
       c.frames(_fwd.x, _fwd.y, _fwd.z);
       bundle.set(k, c);
     }

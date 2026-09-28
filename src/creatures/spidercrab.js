@@ -346,6 +346,7 @@ export class SpiderCrab {
     this.gaitSlow = 1;
     this.blockedT = 0;
     this.retreatT = 0;
+    this.retreatDir = new THREE.Vector3(1, 0, 0);
     this.rage = 0;
     this.nearK = 0;
     this.spd = 0;
@@ -409,6 +410,7 @@ export class SpiderCrab {
 
   update(dt, t, { player, whale = null }) {
     this.events.length = 0;
+    const previousX = this.hub.x, previousZ = this.hub.z;
     const p = player.pos;
     const far = Math.hypot(p.x - this.hub.x, p.z - this.hub.z);
     this.group.visible = far < 120;
@@ -416,7 +418,7 @@ export class SpiderCrab {
     this._look(dt, t, player);
     this._think(dt);
     this._steer(dt);
-    this._place(dt, t);
+    const bodyTravel = this._place(dt, t);
     this.rig.begin();
     this._gait(dt, player, whale);
     this._fore(dt, t, player);
@@ -425,7 +427,7 @@ export class SpiderCrab {
       this._pose(t);
       const travel = this.surface.clear(this.level) ? (this.poseGuard.reset(), 1) : this.poseGuard.constrain();
       this._syncPose();
-      if (travel < 1) {
+      if (travel < 1 || bodyTravel < 1) {
         this.blockedT += dt;
         this.vel.multiplyScalar(0.5);
         for (let i = 0; i < NW; i++) {
@@ -434,6 +436,10 @@ export class SpiderCrab {
           L.safeFoot.copy(L.foot); L.swing = -1;
         }
       } else this.blockedT = 0;
+      if (travel === 1 && bodyTravel === 1 && this.retreatT <= 0) {
+        const dx = previousX - this.hub.x, dz = previousZ - this.hub.z;
+        if (Math.hypot(dx, dz) > 0.001) this.retreatDir.set(dx, 0, dz).normalize();
+      }
       if (this.blockedT > 0.5) {
         this.retreatT = 2;
         this.blockedT = 0;
@@ -441,10 +447,9 @@ export class SpiderCrab {
       }
       if (this.retreatT > 0) {
         this.retreatT -= dt;
-        // Back away with the last clear skin pose, then let IK pick fresh footholds.
+        // Sidling changes travel direction independently of gaze. Retrace actual movement.
         const r = this.rig.root;
-        r.position.x -= Math.sin(this.h) * dt * 1.5;
-        r.position.z -= Math.cos(this.h) * dt * 1.5;
+        r.position.addScaledVector(this.retreatDir, dt * 1.5);
         this.poseGuard.constrain();
         this._syncPose();
         for (let i = 0; i < this.legs.length; i++) {
@@ -662,7 +667,9 @@ export class SpiderCrab {
     const r = this.rig.root;
     r.position.set(this.hub.x, this.bob, this.hub.z);
     r.rotation.set(this.roll, this.h - Math.PI / 2, this.pitch, 'YZX');
-    if (this.bodyGuard.ready) { this.bodyGuard.constrain(); this._syncPose(); }
+    const travel = this.bodyGuard.ready ? this.bodyGuard.constrain() : 1;
+    if (this.bodyGuard.ready) this._syncPose();
+    return travel;
   }
 
   _syncPose() {
@@ -675,7 +682,8 @@ export class SpiderCrab {
 
   _ground(x, z) {
     const f = this.level.floor(Math.floor(x / 2), Math.floor(z / 2));
-    return f > 900 ? 0 : f + 0.18;
+    // The IK tip sits inside the foot mesh; reserve room for the skin below it.
+    return f > 900 ? 0 : f + 0.4;
   }
 
   /** The leg's hip in the world and where its foot wants to be: out along its rest direction, led by the walk. */
@@ -786,7 +794,7 @@ export class SpiderCrab {
       }
       const tx = Math.floor(x / 2), tz = Math.floor(z / 2);
       if (lv.ch(tx, tz) === '=' || lv.solid(tx, tz)) continue;
-      const fy = lv.floor(tx, tz) + 0.18;
+      const fy = lv.floor(tx, tz) + 0.4;
       if (fy > 900) continue;
       if (x > B[0] && x < B[2] && z > B[1] && z < B[3]) continue;
       const reach = Math.hypot(x - hip.x, fy - hip.y, z - hip.z) / L.len;

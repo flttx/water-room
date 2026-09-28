@@ -45,7 +45,7 @@ function checkColossus(label, steps) {
     scene: new THREE.Scene(), level, lampSys: { add: (o) => o }, audio,
     water: { addRipple: noop }, fx: { bubbles: { spawn: noop } }, lightGrid: [],
   });
-  const player = { pos: new THREE.Vector3(103, 1, 44), frozen: true, shake: 0, tileX: 51, tileZ: 22 };
+  const player = { pos: new THREE.Vector3(103, 1, 44), frozen: true, shake: 0, speed: 0, tileX: 51, tileZ: 22 };
   const ctx = { player, camera: { position: player.pos } };
   creature._wake(false);
   const chains = [...creature.arms, ...creature.feelers, ...creature.beard].map((a) => a.chain);
@@ -73,7 +73,8 @@ function checkColossus(label, steps) {
           const step = Math.hypot(c.p[b] - previous[ci][b], c.p[b + 1] - previous[ci][b + 1], c.p[b + 2] - previous[ci][b + 2]);
           maxStep = Math.max(maxStep, step);
           maxSpeed = Math.max(maxSpeed, step / dt);
-          if (t > 12 && creature.state === 'watch') settledSpeed = Math.max(settledSpeed, step / dt);
+          const striking = ci < creature.arms.length && ['slam', 'lie'].includes(creature.arms[ci].mode);
+          if (t > 12 && creature.state === 'watch' && !striking) settledSpeed = Math.max(settledSpeed, step / dt);
         }
       }
       previous[ci].set(c.p);
@@ -85,8 +86,8 @@ function checkColossus(label, steps) {
   console.log(`maximum attachment gap ${attachmentGap.toFixed(3)} m`);
   assert.ok(attachmentGap < 0.3, `${label}: limb detached from the body`);
   assert.ok(maxStretch < 1.001, `${label}: collisions stretched the limb`);
-  assert.ok(maxSpeed < 120, `${label}: limb jumped between frames`);
-  assert.ok(settledSpeed < 30, `${label}: idle limbs jerked after surfacing`);
+  assert.ok(maxSpeed < 28.01, `${label}: limb jumped between frames`);
+  assert.ok(settledSpeed < 12.01, `${label}: idle limbs jerked after surfacing`);
 }
 
 const wall = { solid: (x) => x === 1, floor: () => -10, ceil: () => 10 };
@@ -122,6 +123,55 @@ collideChain(wall, thick, true);
 checkSpans(thick, wall);
 thick.frames(0, 1, 0);
 for (let i = 0; i < thick.n; i++) assert.ok(Math.abs(Math.hypot(...thick.nrm.slice(i * 3, i * 3 + 3)) - 1) < 1e-5, 'folded limbs lost their surface frame');
+
+// Contracted arms must end at their chosen destination instead of extending through it.
+function checkColossusTargets() {
+  const creature = new Colossus({
+    scene: new THREE.Scene(), level: new Level(), lampSys: { add: (o) => o }, audio,
+    water: { addRipple: noop }, fx: { bubbles: { spawn: noop } }, lightGrid: [],
+  });
+  const arm = creature.arms[0], chain = arm.chain, tip = new THREE.Vector3();
+  const open = { solid: () => false, floor: () => -90, ceil: () => 90 };
+  creature.terrain = open;
+  creature._armRoot(arm);
+  const goal = arm.rootW.clone().add(new THREE.Vector3(arm.outX * 9, 2, arm.outZ * 9));
+  creature._armPose(arm, goal, 3.5, 1);
+  assert.ok(tip.fromArray(arm.targets, arm.targets.length - 3).distanceTo(goal) < 1e-4, 'arm target continued beyond its destination');
+  chain.p.set(arm.targets); chain.o.set(arm.targets);
+  collideChain(open, chain, true, Infinity, true);
+  assert.ok(chain.tip(tip).distanceTo(goal) < 1e-4, 'collision length restoration re-extended a contracted arm');
+
+  // A tempting goal behind a wall must be rejected, including the fallback destination.
+  arm.rootW.set(1, -2, 1); arm.outX = 1; arm.outZ = 0;
+  creature.terrain = { ...open, solid: (x) => x === 5 };
+  creature.drape = [{ x: 13, z: 1, deck: false }];
+  creature._pickIdle(arm);
+  assert.ok(arm.idleGoal.x < 10, 'idle arm selected a destination through a wall');
+  assert.ok(creature._armPoseClear(arm, arm.idleGoal, 3.5, 1), 'fallback arm pose intersects terrain');
+
+  creature.terrain = open;
+  creature.state = 'watch';
+  creature._armRoot(arm);
+  arm.mode = 'raise'; arm.t = 1.5; arm.splashed = false;
+  arm.target.copy(arm.rootW).add(new THREE.Vector3(0, 18, 0));
+  chain.tip(arm.strokeStart);
+  const player = { pos: new THREE.Vector3(200, 1, 200), shake: 0 };
+  creature._updateArm(arm, 1 / 60, 0, player);
+  assert.equal(arm.mode, 'raise', 'arm started a slam before it finished lifting');
+  arm.t = 3.5;
+  creature._updateArm(arm, 1 / 60, 0, player);
+  assert.equal(arm.mode, 'idle', 'blocked arm remained stuck in its windup');
+  arm.mode = 'slam'; arm.t = 0.25;
+  creature._updateArm(arm, 1 / 60, 0, player);
+  assert.equal(arm.splashed, false, 'slam effect fired before the arm reached the surface');
+
+  arm.mode = 'lie'; arm.t = 0.2; arm.target.copy(goal);
+  creature._armPose(arm, goal, 5, 0.6);
+  chain.p.set(arm.targets); chain.o.set(arm.targets); chain.collisionReady = false;
+  creature._updateArm(arm, 1 / 60, 0, player);
+  assert.equal(arm.splashed, true, 'actual arm contact no longer triggers impact');
+  creature.dispose();
+}
 
 function checkHunter() {
   const level = new Level();
@@ -179,6 +229,7 @@ function checkHunter() {
 }
 
 checkHunter();
+checkColossusTargets();
 checkColossus('60 fps', [1 / 60]);
 checkColossus('30 fps', [1 / 30]);
 checkColossus('changing frame rate', [1 / 120, 1 / 30, 1 / 60, 1 / 20]);

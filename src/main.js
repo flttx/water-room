@@ -21,6 +21,7 @@ import { SpiderCrab } from './creatures/spidercrab.js';
 import { Angler } from './creatures/angler.js';
 import { loadCreatureModels, loadRiggedModels } from './creatures/tripo.js';
 import { UI } from './ui/ui.js';
+import { Navigation } from './navigation.js';
 
 const DEBUG = new URLSearchParams(window.location.search).has('debug');
 
@@ -131,6 +132,8 @@ class Game {
 
     await step(0.48, '安装阀门、救生圈与生锈的闸门……');
     this.props = new Props({ scene, level, lamps, lampSys: this.lampSys, baker: this.baker });
+    this.navigation = new Navigation(level);
+    ui.navigation.setLevel(level);
 
     this.player = new Player(level, camera);
     this.input = new Input(canvas);
@@ -210,6 +213,7 @@ class Game {
 
   // ------------------------------------------------------------------ settings & sizing
   applySettings(s) {
+    this.navigation?.reset();
     const q = QUALITY[s.quality] || QUALITY.medium;
     this.pixelRatio = Math.min(window.devicePixelRatio || 1, q.max) * q.scale;
     this.water.setReflections(q.refl);
@@ -322,6 +326,7 @@ class Game {
   /** Reset everything for a fresh descent. */
   newGame() {
     const { level, props, player } = this;
+    this.navigation.reset();
     level.dynamicOpen.clear();
     props.reset();
     this.colossus.gateOpen = false;
@@ -674,16 +679,16 @@ class Game {
     const n = this.valvesDone(), all = props.valves.length;
     if (v.pump) {
       props.openDoor();
-      ui.message(`${v.name}已开启（${n}/${all}）。加压门的锁扣松开了。`, 5.5);
+      ui.message(`${v.name}已开启（${n}/${all}）。加压门的锁扣松开了。`, 5.5, 'task');
     } else {
-      ui.message(`${v.name}已开启（${n}/${all}）。管道深处传来轰鸣。`, 5);
+      ui.message(`${v.name}已开启（${n}/${all}）。管道深处传来轰鸣。`, 5, 'task');
     }
     if (n >= all) {
       props.openGate();
       this.colossus.gateOpen = true;
       audio.gateOpen(GATE_POS);
       setTimeout(() => {
-        if (this.state === 'playing') ui.message('远处的闸门正在升起——深渊浴场北侧。', 6);
+        if (this.state === 'playing') ui.message('远处的闸门正在升起——深渊浴场北侧。', 6, 'task');
       }, 5600);
     }
   }
@@ -711,13 +716,13 @@ class Game {
         props.activateCheckpoint(i);
         this.stats.cps++;
         this.audio.checkpoint();
-        this.ui.message('救生圈旁的提灯亮了。检查点。', 3.5);
+        this.ui.message('救生圈旁的提灯亮了。检查点。', 3.5, 'task');
       }
       this.cp = i;
     });
     if (!this.seenAbyss && level.inHall(player.tileX, player.tileZ) === 22) {
       this.seenAbyss = true;
-      this.ui.message('深渊浴场。这里的水没有底。', 5);
+      this.ui.message('深渊浴场。这里的水没有底。', 5, 'task');
     }
   }
 
@@ -744,9 +749,10 @@ class Game {
       return [`按住 E 转动${v.name}`, v.progress];
     }
     const p = player.pos;
-    if (!this.doorOpened && p.distanceTo(DOOR_POS) < 3.2) return ['加压门锁死了。泵房的阀门也许能打开它', 0];
+    const guided = this.ui.settings.difficulty !== 'hard';
+    if (!this.doorOpened && p.distanceTo(DOOR_POS) < 3.2) return [guided ? '加压门锁死了。泵房的阀门也许能打开它' : '加压门锁住了', 0];
     if (!this.gateOpened && Math.hypot(p.x - GATE_POS.x, p.z - GATE_POS.z) < 6 && p.z < 16) {
-      return [this.props.gateT > 0 ? '闸门正在升起……' : `闸门紧闭 · 阀门 ${this.valvesDone()}/${props.valves.length}`, 0];
+      return [this.props.gateT > 0 ? '闸门正在升起……' : guided ? `闸门紧闭 · 阀门 ${this.valvesDone()}/${props.valves.length}` : '闸门紧闭', 0];
     }
     return [null, 0];
   }
@@ -800,6 +806,7 @@ class Game {
 
   respawn() {
     const { player, props } = this;
+    this.navigation.reset();
     const c = props.checkpoints[this.cp];
     this.deathShown = false;
     this.death = null;
@@ -895,10 +902,36 @@ class Game {
     return k;
   }
 
+  _mapMonsters() {
+    const markers = [];
+    const add = (name, pos, small = false) => {
+      if (pos && Number.isFinite(pos.x) && Number.isFinite(pos.y) && Number.isFinite(pos.z)) markers.push({ name, pos, small });
+    };
+    // Visibility flags also perform distance culling; living creatures remain on the map.
+    add('克拉肯', this.colossus);
+    for (const lurker of this.lurkers.list) add('潜伏者', lurker.pos);
+    for (const hunter of this.director.hunters) if (hunter.active) add('追猎者', hunter);
+    if (this.leviathan.active && Number.isFinite(this.leviathan.near)) add('利维坦', this.leviathan.headPos);
+    add('巨鲸', this.whale?.head);
+    add('蜘蛛蟹', this.crab?.rig.root.position);
+    add('鮟鱇', this.angler?.rig.root.position);
+    for (const drifter of [this.drifter, ...this.domeDrifters]) {
+      const p = drifter.bellPos;
+      for (let i = 0; i < p.length; i += 3) {
+        if (p[i] === 0 && p[i + 2] === 0) continue; // Not placed until its first simulation update.
+        add('漂浮群', { x: p[i], y: p[i + 1], z: p[i + 2] }, true);
+      }
+    }
+    return markers;
+  }
+
   _hud(dt) {
     const { player } = this;
     const [prompt, progress] = this._prompt();
     this.ui.updateHud(dt, {
+      player,
+      navigation: this.state === 'playing' && this.ui.settings.difficulty !== 'hard' ? this.navigation.update(player, this.props.valves) : null,
+      monsters: this.state === 'playing' && this.ui.settings.difficulty === 'easy' ? this._mapMonsters() : [],
       breath: player.breath / player.breathMax,
       showBreath: this.state === 'playing' && (player.underwater || player.breath < player.breathMax - 0.5),
       // the eye tracks being noticed, not the ambient presence of an awake creature (<= 0.3)

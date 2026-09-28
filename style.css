@@ -204,6 +204,8 @@ legend { color: var(--ink-dim); font-size: 14px; margin-bottom: 8px; }
 .seg input { position: absolute; opacity: 0; pointer-events: none; }
 .seg label:has(input:checked) { border-color: var(--amber); color: #ffe3bd; background: rgba(240, 166, 74, 0.1); }
 .seg label:has(input:focus-visible) { box-shadow: 0 0 0 2px rgba(240, 166, 74, 0.6); }
+.difficulty-choice { width: min(100%, 340px); margin: 24px 0; }
+.difficulty-note { margin: 8px 0 0; color: var(--ink-dim); font-size: 12px; line-height: 1.7; min-height: 1.7em; }
 .row { display: grid; grid-template-columns: 7em 1fr 3.2em; align-items: center; gap: 10px; font-size: 14px; color: var(--ink-dim); }
 .row output { text-align: right; color: var(--ink); font-variant-numeric: tabular-nums; }
 .row.check { grid-template-columns: auto 1fr; cursor: pointer; }
@@ -238,6 +240,28 @@ input[type="checkbox"] { accent-color: var(--amber); width: 16px; height: 16px; 
 .valves { letter-spacing: 0.2em; color: rgba(215, 228, 223, 0.7); text-shadow: 0 1px 3px #000; }
 .valves b { color: #ffe3bd; font-weight: 600; }
 .valves.done b { color: #7ff0a0; }
+.navigation { margin-top: 12px; }
+.route-map { width: 252px; padding: 12px; background: var(--panel); border: 1px solid var(--line); text-align: left; }
+.route-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12px; }
+.route-heading span:last-child { color: var(--ink-dim); }
+#hud-map { display: block; width: 100%; height: auto; margin: 10px 0; }
+.route-target { margin: 0; color: #ffe3bd; font-size: 13px; }
+.route-legend { display: flex; justify-content: space-between; gap: 8px; margin: 0 0 10px; color: var(--ink-dim); font-size: 11px; }
+.route-legend i { display: inline-block; width: 6px; height: 6px; margin-right: 6px; background: #ff7974; transform: rotate(45deg); }
+.route-status { margin: 4px 0 0; color: var(--ink-dim); font-size: 12px; line-height: 1.5; }
+.direction-guide { display: flex; flex-direction: column; align-items: center; gap: 4px; margin-left: auto; width: 76px; padding: 8px; background: var(--panel); color: var(--amber); }
+.direction-guide svg { flex: none; }
+.direction-guide span { color: var(--ink); font-size: 12px; line-height: 1.5; text-align: center; }
+
+@media (max-width: 600px), (max-height: 500px) {
+  .hud-top { top: 12px; right: 12px; }
+  .route-map { width: 184px; padding: 9px; }
+  .route-heading, .route-status { font-size: 11px; }
+  .difficulty-choice { margin: 16px 0; }
+}
+@media (max-height: 500px) {
+  .screen-title { align-items: flex-start; overflow-y: auto; }
+}
 
 .eye {
   position: absolute;

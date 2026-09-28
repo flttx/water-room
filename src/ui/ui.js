@@ -1,9 +1,11 @@
 // DOM overlay: loading, title and pause menus, settings/help dialogs, death and win screens, HUD.
 // Everything is static markup in index.html; this module only toggles and fills it (textContent only).
+import { NavigationHud } from './navigation-hud.js';
 
 const STORE_KEY = 'drowned-halls.settings';
-export const DEFAULT_SETTINGS = { quality: 'medium', sens: 1, fov: 72, volume: 0.8, invertY: false };
+export const DEFAULT_SETTINGS = { difficulty: 'normal', quality: 'medium', sens: 1, fov: 72, volume: 0.8, invertY: false };
 const QUALITIES = ['low', 'medium', 'high'];
+const DIFFICULTIES = { easy: '右上角显示逃生路线', normal: '方向箭头指引', hard: '无导航与任务提示，保留操作和危险反馈' };
 
 const $ = (id) => document.getElementById(id);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -15,6 +17,7 @@ function loadSettings() {
     const raw = window.localStorage.getItem(STORE_KEY);
     if (!raw) return s;
     const v = JSON.parse(raw);
+    if (v && Object.hasOwn(DIFFICULTIES, v.difficulty)) s.difficulty = v.difficulty;
     if (QUALITIES.includes(v.quality)) s.quality = v.quality;
     if (Number.isFinite(v.sens)) s.sens = clamp(v.sens, 0.3, 2.5);
     if (Number.isFinite(v.fov)) s.fov = clamp(v.fov, 60, 95);
@@ -60,8 +63,10 @@ export class UI {
       msg: $('hud-msg'),
       flash: $('hud-flash'),
     };
+    this.navigation = new NavigationHud();
     this._bindMenus();
     this._bindSettings();
+    this._syncDifficulty();
     document.addEventListener('keydown', (e) => this._modalKey(e), true);
   }
 
@@ -141,7 +146,7 @@ export class UI {
     if (trigger) trigger.setAttribute('aria-expanded', 'true');
     if (id === 'settings') this._fillSettings();
     this.modal.hidden = false;
-    const first = this.modal.querySelector(FOCUSABLE);
+    const first = this._modalFocusables()[0];
     if (first) first.focus({ preventScroll: true });
   }
 
@@ -159,6 +164,16 @@ export class UI {
 
   get modalOpen() { return !!this.modal; }
 
+  _modalFocusables() {
+    const candidates = [...this.modal.querySelectorAll(FOCUSABLE)].filter((el) => el.offsetParent !== null || el.type === 'radio');
+    // A native radio group has one Tab stop: its checked option (or the first option).
+    return candidates.filter((el) => {
+      if (el.type !== 'radio' || !el.name) return true;
+      const group = candidates.filter((r) => r.type === 'radio' && r.name === el.name && r.form === el.form);
+      return el === (group.find((r) => r.checked) || group[0]);
+    });
+  }
+
   _modalKey(e) {
     if (!this.modal) return;
     if (e.key === 'Escape') {
@@ -168,7 +183,7 @@ export class UI {
       return;
     }
     if (e.key !== 'Tab') return;
-    const list = [...this.modal.querySelectorAll(FOCUSABLE)].filter((el) => el.offsetParent !== null || el.type === 'radio');
+    const list = this._modalFocusables();
     if (!list.length) return;
     const first = list[0], last = list[list.length - 1];
     if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
@@ -180,6 +195,7 @@ export class UI {
   _fillSettings() {
     const f = $('settings-form');
     const s = this.settings;
+    for (const r of f.elements.difficulty) r.checked = r.value === s.difficulty;
     for (const r of f.elements.quality) r.checked = r.value === s.quality;
     f.elements.sens.value = String(s.sens);
     f.elements.fov.value = String(s.fov);
@@ -200,7 +216,9 @@ export class UI {
     f.addEventListener('submit', (e) => e.preventDefault());
     const apply = () => {
       const q = [...f.elements.quality].find((r) => r.checked);
+      const difficulty = f.elements.difficulty.value;
       this.settings = {
+        difficulty: Object.hasOwn(DIFFICULTIES, difficulty) ? difficulty : this.settings.difficulty,
         quality: q ? q.value : this.settings.quality,
         sens: clamp(Number(f.elements.sens.value) || 1, 0.3, 2.5),
         fov: clamp(Number(f.elements.fov.value) || 72, 60, 95),
@@ -208,15 +226,34 @@ export class UI {
         invertY: f.elements.invertY.checked,
       };
       this._outputs();
+      this._syncDifficulty();
       saveSettings(this.settings);
       this._emit('settings', this.settings);
     };
     f.addEventListener('input', apply);
     f.addEventListener('change', apply);
+    $('title-difficulty').addEventListener('change', (e) => {
+      if (!Object.hasOwn(DIFFICULTIES, e.target.value)) return;
+      this.settings.difficulty = e.target.value;
+      this._syncDifficulty();
+      saveSettings(this.settings);
+      this._emit('settings', this.settings);
+    });
+  }
+
+  _syncDifficulty() {
+    const difficulty = this.settings.difficulty;
+    for (const radio of document.querySelectorAll('input[name="difficulty"]')) radio.checked = radio.value === difficulty;
+    for (const id of ['title-difficulty-note', 'settings-difficulty-note']) $(id).textContent = DIFFICULTIES[difficulty];
+    for (const el of document.querySelectorAll('[data-task-hint]')) el.hidden = difficulty === 'hard';
+    if (difficulty === 'hard' && this.msgKind === 'task') this.clearMessage();
+    this.navigation.hide();
   }
 
   // ------------------------------------------------------------------ HUD
-  message(text, seconds = 4) {
+  message(text, seconds = 4, kind = 'status') {
+    if (kind === 'task' && this.settings.difficulty === 'hard') return;
+    this.msgKind = kind;
     const m = this.hud.msg;
     m.textContent = text;
     m.classList.add('show');
@@ -225,6 +262,8 @@ export class UI {
 
   clearMessage() {
     this.msgTimer = 0;
+    this.msgKind = null;
+    this.hud.msg.textContent = '';
     this.hud.msg.classList.remove('show');
   }
 
@@ -240,6 +279,7 @@ export class UI {
    */
   updateHud(dt, s) {
     const h = this.hud;
+    this.navigation.update(s.navigation, s.player, this.settings.difficulty, s.monsters);
     if (this.msgTimer > 0) {
       this.msgTimer -= dt;
       if (this.msgTimer <= 0) h.msg.classList.remove('show');

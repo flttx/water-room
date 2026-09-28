@@ -3,10 +3,11 @@ import { sculptBody, EyeSet, buildTeeth, layoutEyes, makeSkinMaterial, TentacleB
 import { GlowPoints } from './glow.js';
 import { attackClear, BodyCollider, PoseGuard, sphereClear } from './collision.js';
 import { mulberry32 } from '../render/textures.js';
-import { LURKERS } from '../level/mapdata.js';
+import { LURKERS, DRAIN_LURKER_PATROL } from '../level/mapdata.js';
 
 // Lure-fish: blind ambushers lying in dark side pools and crawlways. A warm light bobs in front of a
 // gaping mouth full of needles; anything that comes close, or makes noise nearby, is taken in one lunge.
+// The drain entrance guard patrols between ambushes; the other fish stay near their lairs.
 
 const LURE_COL = [1, 0.72, 0.38];
 const REACH = 6;          // metres a lunge can carry the head away from its lair
@@ -69,6 +70,8 @@ class Lurker {
     const low = L.ceil(tx, tz) < 2;
     this.scale = low ? 0.72 : 0.95 + rand() * 0.25;
     this.home = new THREE.Vector3(hx, low ? -1.9 : -2.6 - rand() * 0.6, hz);
+    this.patrol = tx === DRAIN_LURKER_PATROL.entrance[0] && tz === DRAIN_LURKER_PATROL.entrance[1]
+      ? { entry: new THREE.Vector3(), inner: new THREE.Vector3(), anchor: this.home.clone(), next: 1, pause: 2 } : null;
     this.yaw0 = this._openYaw(tx, tz);
     this.yaw = this.yaw0;
     this.pos = this.home.clone();
@@ -165,8 +168,18 @@ class Lurker {
     this.homeYaw = this.yaw0;
     this.now = 0;
     this.initialised = false;
+    this.limbsNear = false;
     this.poseGuard.ready = false;
     this._fitHome();
+    if (this.patrol) {
+      const [x, z] = DRAIN_LURKER_PATROL.innerWorld;
+      this.patrol.inner.set(x, this.home.y, z);
+      const [ex, ez] = DRAIN_LURKER_PATROL.entryWorld;
+      this.patrol.entry.set(ex, this.home.y, ez);
+      this.patrol.anchor.copy(this.home);
+      this.patrol.next = 1;
+      this.patrol.pause = 2;
+    }
   }
 
   _bodyClear() {
@@ -240,16 +253,18 @@ class Lurker {
     if (!this.initialised) this._place(t);
     const dh = Math.hypot(p.x - this.maw.x, p.z - this.maw.z);
     const d3 = Math.hypot(p.x - this.maw.x, p.y - this.maw.y, p.z - this.maw.z);
-    const reachable = !player.frozen && p.y < SAFE_EYE_Y && Math.hypot(p.x - this.home.x, p.z - this.home.z) < REACH * this.scale + 3.5;
+    const origin = this.patrol ? this.pos : this.home;
+    const reachable = !player.frozen && p.y < SAFE_EYE_Y && Math.hypot(p.x - origin.x, p.z - origin.z) < REACH * this.scale + 3.5;
     const tensionTarget = reachable ? clamp(1 - (dh - NEAR_R) / 7, 0, 1) : 0;
     this.tension += (tensionTarget - this.tension) * Math.min(1, dt * 2);
 
     if (this.state === 'wait') {
       this.pitch += (0 - this.pitch) * Math.min(1, dt * 2);
-      this.pos.lerp(this.home, Math.min(1, dt * 0.5));
+      if (!this.patrol) this.pos.lerp(this.home, Math.min(1, dt * 0.5));
       this.light += (1 - this.light) * Math.min(1, dt * 0.8);
       const close = (p.y > 0 ? dh : d3) < NEAR_R * (0.6 + 0.4 * this.scale) + 0.6;
       if (reachable && this.cool <= 0 && (close || this.agitation >= 1) && this._clearTo(player)) this._strike(player);
+      else if (this.patrol) this._patrol(dt);
     } else if (this.state === 'suck') {
       this.light += (0 - this.light) * Math.min(1, dt * 14);
       this.pitch += (0.25 - this.pitch) * Math.min(1, dt * 8);
@@ -268,7 +283,7 @@ class Lurker {
     } else if (this.state === 'return') {
       this.light += (0.9 - this.light) * Math.min(1, dt * 0.5);
       this.pitch += (0 - this.pitch) * Math.min(1, dt * 2);
-      this.pos.lerp(this.home, Math.min(1, dt * 1.2));
+      this.pos.lerp(this.patrol ? this.patrol.anchor : this.home, Math.min(1, dt * 1.2));
       this._turn(this.homeYaw, dt, 1.5);
       if (this.t > RETURN) {
         this.state = 'wait';
@@ -281,12 +296,42 @@ class Lurker {
     }
     if (this.state !== 'wait' && this.state !== 'feed' && this.state !== 'return') this.tension = 1;
     this._place(t);
-    if (!this.initialised) {
+    if (!this.initialised || (near && !this.limbsNear)) {
+      // A distant patrol keeps moving while its limb simulation is culled.
+      // Rebuild at the current body before showing it, discarding the old contact pose.
       this._resetChains();
       this.initialised = true;
     }
+    this.limbsNear = near;
     if (near) this._simLimbs(dt, t);
     this._effects(dt, t, camera, near);
+  }
+
+  _patrol(dt) {
+    const patrol = this.patrol;
+    if (patrol.pause > 0) {
+      patrol.pause = Math.max(0, patrol.pause - dt);
+      if (patrol.next === 1) this._turn(this.yaw0, dt, 1.5);
+      return;
+    }
+    const target = patrol.next === 1 ? patrol.inner : patrol.entry;
+    const dx = target.x - this.pos.x, dz = target.z - this.pos.z;
+    const distance = Math.hypot(dx, dz);
+    if (distance < 0.001) {
+      this.pos.x = target.x;
+      this.pos.z = target.z;
+      patrol.pause = patrol.next === 1 ? 7 : 2;
+      patrol.next = 1 - patrol.next;
+      return;
+    }
+    const yaw = Math.atan2(dx, dz);
+    this._turn(yaw, dt, 1.5);
+    // Turn before advancing; _place sweeps the complete body through the terrain.
+    const error = Math.atan2(Math.sin(yaw - this.yaw), Math.cos(yaw - this.yaw));
+    if (Math.abs(error) > 0.15) return;
+    const step = Math.min(distance, 0.85 * dt);
+    this.pos.x += dx / distance * step;
+    this.pos.z += dz / distance * step;
   }
 
   _clearTo(player) {
@@ -296,6 +341,10 @@ class Lurker {
   }
 
   _strike(player) {
+    if (this.patrol) {
+      this.patrol.anchor.copy(this.pos);
+      this.homeYaw = this.yaw;
+    }
     this.state = 'suck';
     this.t = 0;
     this.agitation = 0;
@@ -321,7 +370,8 @@ class Lurker {
     if (d > 1e-3) { dx /= d; dz /= d; }
     const nx = this.pos.x + dx * step, nz = this.pos.z + dz * step;
     const ttx = Math.floor(nx / 2), ttz = Math.floor(nz / 2);
-    if (L.isWater(ttx, ttz) && !L.solid(ttx, ttz) && Math.hypot(nx - this.home.x, nz - this.home.z) < REACH * s + 0.5) {
+    const origin = this.patrol ? this.patrol.anchor : this.home;
+    if (L.isWater(ttx, ttz) && !L.solid(ttx, ttz) && Math.hypot(nx - origin.x, nz - origin.z) < REACH * s + 0.5) {
       this.pos.x = nx;
       this.pos.z = nz;
     }
@@ -390,8 +440,9 @@ class Lurker {
       c.pull(i, _a.x - fx * s + rx * w, _a.y - s * 0.12, _a.z - fz * s + rz * w, k * (0.3 + 0.7 * tt));
     }
     _b.set(-fx, -0.1, -fz).normalize();
-    c.constrain(_a.x, _a.y, _a.z, _b.x, _b.y, _b.z, 0.08);
-    collideChain(L, c, true);
+    // Let a wall-compressed tail unfold with the pose instead of forcing every link straight.
+    c.constrain(_a.x, _a.y, _a.z, _b.x, _b.y, _b.z, 0.08, true);
+    collideChain(L, c, true, fast ? 28 : 10, true);
     c.frames(0, 1, 0);
     this.tailBundle.set(0, c);
     this.tailBundle.upload();

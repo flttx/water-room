@@ -321,6 +321,7 @@ class Glows {
 const SUB = {
   '泵房←': 'PUMP ROOM', '中央泳池': 'LIDO', '阶梯浴场': 'TERRACE BATHS', '东蓄水池': 'EAST CISTERN',
   '更衣室': 'CHANGING ROOMS', '救生站': 'LIFEGUARD', '排水渠': 'DRAIN', '淋浴廊': 'SHOWERS', '泵房 · 水下': 'PUMP ROOM ↓',
+  '更衣室近道': '机房积水 · 保持安静', '救生站近道': '机房积水 · 保持安静',
 };
 
 export class Props {

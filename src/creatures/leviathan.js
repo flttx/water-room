@@ -293,7 +293,9 @@ export class Leviathan {
     tx /= tl; tz /= tl;
     x += tx * (u - s);
     z += tz * (u - s);
-    const y = this.yEnd + (this.yMid - this.yEnd) * Math.pow(Math.sin(q * Math.PI), 0.6);
+    // Ease into the level entry/exit tangents without a vertical velocity spike.
+    const rise = Math.sin(q * Math.PI);
+    const y = this.yEnd + (this.yMid - this.yEnd) * rise * rise * (3 - 2 * rise);
     out[0] = x; out[1] = y; out[2] = z; out[3] = tx; out[4] = tz;
     return out;
   }
@@ -306,7 +308,7 @@ export class Leviathan {
       const inRegion = p.x > (A.x0 - 6) * 2 && p.x < (A.x1 + 7) * 2 && p.z > (A.z0 - 4) * 2 && p.z < (A.z1 + 6) * 2;
       if (inRegion) this.wait -= dt;
       if (this.wait <= 0 && calm && !player.frozen) this._begin(p);
-      return;
+      if (!this.active) return;
     }
 
     this.u += SPEED * dt;

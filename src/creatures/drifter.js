@@ -266,7 +266,11 @@ export class Drifter {
     const u = (s - L.s[lo]) / Math.max(1e-5, L.s[hi] - L.s[lo]);
     out[0] = L.x[lo] + (L.x[hi] - L.x[lo]) * u;
     out[1] = L.z[lo] + (L.z[hi] - L.z[lo]) * u;
-    const dx = L.x[hi] - L.x[lo], dz = L.z[hi] - L.z[lo];
+    // Interpolate vertex tangents so lateral sway does not jump at each segment boundary.
+    const prev = (lo + L.x.length - 2) % (L.x.length - 1), next = (hi + 1) % (L.x.length - 1);
+    const dx0 = L.x[hi] - L.x[prev], dz0 = L.z[hi] - L.z[prev];
+    const dx1 = L.x[next] - L.x[lo], dz1 = L.z[next] - L.z[lo];
+    const dx = dx0 + (dx1 - dx0) * u, dz = dz0 + (dz1 - dz0) * u;
     const d = Math.hypot(dx, dz) || 1;
     out[2] = dx / d;
     out[3] = dz / d;

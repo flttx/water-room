@@ -15,7 +15,22 @@
   <div id="hud" class="hud" hidden>
     <div class="crosshair" aria-hidden="true"></div>
     <div class="hud-top">
-      <div class="valves" id="hud-valves" aria-label="已开启阀门">阀门 <b>0</b>/<span>4</span></div>
+      <div class="valves" id="hud-valves" aria-label="已开启阀门" data-task-hint>阀门 <b>0</b>/<span>4</span></div>
+      <section class="navigation" id="hud-navigation" aria-label="逃生指引" hidden>
+        <div class="route-map" id="hud-route" hidden>
+          <div class="route-heading"><span>逃生路线</span><span aria-label="地图上方为北">北</span></div>
+          <canvas id="hud-map" width="504" height="308" role="img" aria-label="逃生路线地图"></canvas>
+          <div class="route-legend"><span>视野宽 80 米</span><span><i aria-hidden="true"></i>怪物位置</span></div>
+          <p class="route-target" id="hud-route-target"></p>
+          <p class="route-status" id="hud-route-status"></p>
+        </div>
+        <div class="direction-guide" id="hud-direction" role="img" aria-label="前进方向" hidden>
+          <svg id="hud-direction-arrow" viewBox="0 0 64 64" width="48" height="48" aria-hidden="true">
+            <path d="M32 8 47 48 32 40 17 48Z" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linejoin="round" />
+          </svg>
+          <span id="hud-direction-action"></span>
+        </div>
+      </section>
     </div>
     <div class="eye" id="hud-eye" aria-hidden="true">
       <svg viewBox="0 0 64 32" width="64" height="32">
@@ -52,6 +67,15 @@
     <div class="title-box">
       <h1 id="title-name" class="logo">深水房<small>DROWNED HALLS</small></h1>
       <p class="tagline">这座浴场从来没有尽头。水比你记得的更深。<br>别出声，别让它们看见你。</p>
+      <fieldset class="difficulty-choice" id="title-difficulty" aria-describedby="title-difficulty-note">
+        <legend>游戏难度</legend>
+        <div class="seg">
+          <label><input type="radio" name="difficulty" value="easy"> 简单</label>
+          <label><input type="radio" name="difficulty" value="normal" checked> 正常</label>
+          <label><input type="radio" name="difficulty" value="hard"> 困难</label>
+        </div>
+        <p class="difficulty-note" id="title-difficulty-note">方向箭头指引</p>
+      </fieldset>
       <nav class="menu" aria-label="主菜单">
         <button type="button" id="btn-start" class="primary">开始潜入</button>
         <button type="button" id="btn-settings" aria-haspopup="dialog" aria-expanded="false">设置</button>
@@ -65,7 +89,7 @@
   <section id="pause" class="screen screen-dim" hidden aria-labelledby="pause-title">
     <div class="panel">
       <h2 id="pause-title">暂停</h2>
-      <p class="objective" id="pause-objective"></p>
+      <p class="objective" id="pause-objective" data-task-hint></p>
       <nav class="menu" aria-label="暂停菜单">
         <button type="button" id="btn-resume" class="primary">继续</button>
         <button type="button" id="btn-settings2" aria-haspopup="dialog" aria-expanded="false">设置</button>
@@ -110,6 +134,15 @@
     <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="settings-title">
       <h2 id="settings-title">设置</h2>
       <form id="settings-form" class="form">
+        <fieldset aria-describedby="settings-difficulty-note">
+          <legend>游戏难度</legend>
+          <div class="seg">
+            <label><input type="radio" name="difficulty" value="easy"> 简单</label>
+            <label><input type="radio" name="difficulty" value="normal"> 正常</label>
+            <label><input type="radio" name="difficulty" value="hard"> 困难</label>
+          </div>
+          <p class="difficulty-note" id="settings-difficulty-note">方向箭头指引</p>
+        </fieldset>
         <fieldset>
           <legend>画质</legend>
           <div class="seg">
@@ -143,8 +176,8 @@
         <dt>F</dt><dd>手电筒（会让你更显眼）</dd>
         <dt>Esc</dt><dd>暂停</dd>
       </dl>
-      <p class="help-note">目标：找到出口。三处阀门能开启深渊浴场北侧的闸门。<br>
-        水下只能憋气约三十秒。水里的东西靠光和声音找你——蹲下、慢游、躲在柱子和墙后。<br>
+      <p class="help-note" data-task-hint>目标：找到出口。四处阀门能开启深渊浴场北侧的闸门。</p>
+      <p class="help-note">水下只能憋气约三十秒。水里的东西靠光和声音找你——蹲下、慢游、躲在柱子和墙后。<br>
         提灯亮起的救生圈是检查点，被抓住后会从那里醒来。</p>
       <div class="dialog-actions">
         <button type="button" id="help-close" class="primary">明白</button>

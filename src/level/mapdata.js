@@ -164,6 +164,7 @@ function build() {
   rect(89, 71, 90, 74, 'l');
   rect(86, 64, 87, 67, 'u');           // flooded dead end
   rect(73, 66, 76, 67, 'l');           // to V3
+  set(79, 69, 'l');                    // turning recess for the entrance guard's body
 
   // ===== North-east shower gallery: pool under a raised walkway, a fallen slab across the water
   rect(70, 14, 90, 23, '.');
@@ -222,8 +223,12 @@ function build() {
   rect(1, 64, 2, 70, 'u');
   rect(20, 79, 26, 81, '~');            // south sump
   rect(84, 3, 88, 7, '~');              // north bay off H4
-  rect(40, 60, 44, 63, '~');            // drowned plant room off the Lido corridor
+  // Optional flooded shortcut: checkpoint corridor -> plant room -> west canal -> lockers.
+  // The resident lure-fish guards the shorter crossing; the original routes remain open.
+  rect(40, 60, 44, 63, '~');
   rect(45, 61, 50, 61, ',');
+  rect(34, 61, 39, 62, '~');
+  rect(28, 61, 30, 62, ',');           // climb-out landing into the old locker dead end
 
   // ===== Underground reservoir: a vaulted dome of black water behind the east bay, catwalks over a deep basin
   const [rx0, rz0, rx1, rz1] = RESERVOIR.dome, [bx0, bz0, bx1, bz1] = RESERVOIR.basin;
@@ -315,11 +320,17 @@ export const SIGNS = [
   [9, 12, 'A-9'], [94, 12, 'C-9'], [14, 13, '泵房←'], [44, 33, '中央泳池'],
   [11, 41, '阶梯浴场'], [81, 32, '东蓄水池'], [20, 58, '更衣室'], [52, 58, '救生站'],
   [74, 66, '排水渠'], [90, 13, '淋浴廊'], [9, 36, '泵房 · 水下'], [108, 45, '地下水库'], [102, 53, '水库→'],
+  [50, 61, '更衣室近道'], [28, 61, '救生站近道'],
 ];
+
+// This entrance guard periodically leaves the junction for the inner drain.
+export const DRAIN_LURKER_PATROL = {
+  entrance: [78, 66], entryWorld: [155.5, 134], innerWorld: [156.5, 141.5],
+};
 
 // Dark water where lure-fish lie in wait: [tx, tz]
 export const LURKERS = [
-  [27, 21], [80, 40], [88, 49], [78, 66], [101, 51], [86, 5], [2, 61], [42, 61],
+  [27, 21], [80, 40], [88, 49], DRAIN_LURKER_PATROL.entrance, [101, 51], [86, 5], [2, 61], [42, 61],
 ];
 
 // Tile waypoints of the slow drifting colony's loop through the canals
