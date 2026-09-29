@@ -8,7 +8,7 @@ import { mulberry32 } from '../render/textures.js';
 
 // A thirteen-metre anglerfish lying on the silt of the reservoir basin under the east catwalk, its lure hanging
 // in the black like a lamp someone forgot. It does not hunt: it waits. Rush past it or crash into the water
-// near it and it strikes, jaw first; slip by slowly and it never moves. After a strike its light goes out for
+// near it and it strikes, jaw first; otherwise it sculls near its lair. After a strike its light goes out for
 // a while. The body is the rigged Tripo model (public/models/angler.glb, mouth at +z, up +y), posed by FK.
 
 const S = 13;
@@ -76,6 +76,7 @@ export class Angler {
     this.from = new THREE.Vector3();
     this.to = new THREE.Vector3();
     this.off = new THREE.Vector3();
+    this.idleOffset = new THREE.Vector3();
     this.surface = new RigSurface(rig);
     this.poseGuard = this.surface.guard(level);
     this.reset();
@@ -90,6 +91,7 @@ export class Angler {
     this.yaw = this.homeYaw;
     this.pitch = 0;
     this.off.set(0, 0, 0);
+    this.idleOffset.set(0, 0, 0);
     this.caught = false;
     this.alarm = null;
     this._place();
@@ -163,11 +165,11 @@ export class Angler {
       default:
         break;
     }
-    this._move(dt);
+    this._move(dt, t);
     this._place();
     this._pose(dt, t);
     this.poseGuard.constrain();
-    this.off.copy(this.rig.root.position).sub(this.home);
+    this.off.copy(this.rig.root.position).sub(this.home).sub(this.idleOffset);
     this.pitch = this.rig.root.rotation.x;
     this.yaw = this.rig.root.rotation.y;
     this.rig.toWorld(this.head, MOUTH, this.mouth);
@@ -185,7 +187,7 @@ export class Angler {
   /** Strike vector: from the resting mouth toward the swimmer, at most REACH long, within its field of view. */
   _aim(p) {
     this.from.copy(this.off);
-    _a.subVectors(p, this.mouth).add(this.off);
+    _a.subVectors(p, this.mouth).add(this.off).add(this.idleOffset);
     const yawTo = Math.atan2(_a.x, _a.z);
     const dy = wrapAngle(yawTo - this.homeYaw);
     this.aimYaw = this.homeYaw + clamp(dy, -0.7, 0.7);
@@ -195,9 +197,18 @@ export class Angler {
     this.to.y = Math.max(0, this.to.y);
   }
 
-  _move(dt) {
+  _move(dt, t) {
     const T = this.stateT;
     let yawT = this.homeYaw, pitchT = 0;
+    const resting = this.state === 'idle' || this.state === 'dark';
+    // Slow fin strokes keep the belly just above the silt. Keep this offset separate from
+    // the strike so recovery still returns to its lair, and blend it out during attacks.
+    const forward = resting ? Math.sin(t * 0.38) * 0.45 : 0;
+    const side = resting ? Math.sin(t * 0.53) * 0.24 : 0;
+    const fx = Math.sin(this.homeYaw), fz = Math.cos(this.homeYaw);
+    _b.set(fx * forward + fz * side, resting ? 0.25 + 0.12 * Math.sin(t * 0.6) : 0,
+      fz * forward - fx * side);
+    this.idleOffset.lerp(_b, 1 - Math.exp(-dt * 1.2));
     if (this.state === 'lunge') {
       const k = Math.min(1, T / LUNGE_T), e = 1 - Math.pow(1 - k, 3);
       this.off.lerpVectors(this.from, this.to, e);
@@ -220,7 +231,7 @@ export class Angler {
 
   _place() {
     const r = this.rig.root;
-    r.position.copy(this.home).add(this.off);
+    r.position.copy(this.home).add(this.off).add(this.idleOffset);
     r.rotation.set(this.pitch, this.yaw, 0, 'YXZ');
   }
 

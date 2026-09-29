@@ -41,9 +41,12 @@ node tools/lurker-patrol-check.mjs
 node tools/lurker-motion-check.mjs
 node tools/swimmer-motion-check.mjs
 node tools/dome-motion-check.mjs --only=angler
+npm run test:crab
 ```
 
 `node tools/difficulty-check.mjs` and `node tools/swimmer-visual-check.mjs` launch system Chrome. The difficulty check covers settings, navigation, live monster markers, and patrol scenes; the visual check inspects real WebGL models.
+
+`npm run test:crab` covers natural pursuit and attack recovery at 30/60 FPS, an encounter after offscreen patrol, continuous walking feet, actual skinned foot contact, binocular tracking, and sight blocked by the pump deck. It is included in `npm run check`. The new contact assertions currently fail because some walking feet remain airborne after collision recovery; the overall check must not be reported as passing. `node tools/crab-visual-check.mjs` captures the textured crab in Chrome, including lateral eye tracking.
 
 The full movement diagnostics are:
 
@@ -52,7 +55,7 @@ node tools/hunter-motion-check.mjs
 node tools/dome-motion-check.mjs
 ```
 
-These diagnostics currently report persistent stalls on the Hunter's narrow turns, the Kraken's dive, the Spider Crab's west side, and the Whale's route, and exit with a non-zero status. This records known unresolved behavior. Do not add these full diagnostics to the pass criteria or remove their failure assertions until the issues are fixed. Use `--only=whale`, `--only=crab`, or `--only=angler` to check one reservoir creature. Run the Hunter's focused regression with `node tools/hunter-motion-check.mjs --regression`.
+These diagnostics currently report persistent stalls on the Hunter's narrow turns, the Kraken's dive, and the Whale's route. The Spider Crab's two-minute patrol still has a ten-second window below the 0.5 m progress threshold, despite passing its pursuit and gaze checks. These failures remain non-zero results. Do not remove their failure assertions or treat the full diagnostics as passing until the issues are fixed. Use `--only=whale`, `--only=crab`, or `--only=angler` to check one reservoir creature. Run the Hunter's focused regression with `node tools/hunter-motion-check.mjs --regression`.
 
 ## Project structure
 

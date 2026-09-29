@@ -230,8 +230,19 @@ class Lurker {
   _place(t) {
     const r = this.root;
     const sway = this.state === 'wait' ? 1 : 0.2;
-    r.position.copy(this.pos);
-    r.position.y += Math.sin(t * 0.6 + this.k) * 0.12 * sway;
+    const bob = Math.sin(t * 0.6 + this.k) * 0.12 * sway;
+    if (this.poseGuard?.ready && this.state === 'wait' && !this.patrol) {
+      // Slide the complete body along tight lairs. A blocked bob or roll must not
+      // cancel a clear sculling step on another axis.
+      for (const [axis, value] of [['x', this.pos.x], ['z', this.pos.z], ['y', this.pos.y + bob]]) {
+        r.position[axis] = value;
+        r.updateMatrixWorld(true);
+        this.poseGuard.constrain();
+      }
+    } else {
+      r.position.copy(this.pos);
+      r.position.y += bob;
+    }
     r.rotation.set(-this.pitch, this.yaw + Math.sin(t * 0.37 + this.k * 2) * 0.08 * sway, Math.sin(t * 0.45 + this.k) * 0.05 * sway, 'YXZ');
     r.updateMatrixWorld(true);
     if (this.poseGuard?.ready) {
@@ -260,7 +271,18 @@ class Lurker {
 
     if (this.state === 'wait') {
       this.pitch += (0 - this.pitch) * Math.min(1, dt * 2);
-      if (!this.patrol) this.pos.lerp(this.home, Math.min(1, dt * 0.5));
+      if (!this.patrol) {
+        // Hold the lair with a small sculling circuit, in the fish's own forward/right axes.
+        // _place sweeps the complete body; crowded lairs simply shorten the drift.
+        const forward = Math.sin(t * 0.43 + this.k) * 0.48 * this.scale;
+        const side = Math.sin(t * 0.61 + this.k * 2) * 0.22 * this.scale;
+        const fx = Math.sin(this.yaw0), fz = Math.cos(this.yaw0);
+        _a.set(this.home.x + fx * forward + fz * side, this.home.y,
+          this.home.z + fz * forward - fx * side);
+        const distance = this.pos.distanceTo(_a);
+        this.pos.lerp(_a, Math.min(1 - Math.exp(-dt * 1.5), 0.35 * dt / Math.max(distance, 1e-6)));
+        this._turn(this.yaw0, dt, 0.3);
+      }
       this.light += (1 - this.light) * Math.min(1, dt * 0.8);
       const close = (p.y > 0 ? dh : d3) < NEAR_R * (0.6 + 0.4 * this.scale) + 0.6;
       if (reachable && this.cool <= 0 && (close || this.agitation >= 1) && this._clearTo(player)) this._strike(player);

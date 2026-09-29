@@ -127,8 +127,8 @@ function sampleGeometry(fish, level) {
         longestPause = Math.max(longestPause, innerPause);
       } else innerPause = 0;
       for (const other of manager.list) if (other !== fish) {
-        assert.equal(other.state, 'wait', `stationary lurker ${other.k} unexpectedly attacked`);
-        assert.ok(horizontalDistance(other.pos, other.home) < 0.1, `stationary lurker ${other.k} started roaming`);
+        assert.equal(other.state, 'wait', `lair lurker ${other.k} unexpectedly attacked`);
+        assert.ok(horizontalDistance(other.pos, other.home) < 0.7, `lair lurker ${other.k} left its idle swimming area`);
       }
       for (let k = 0; k < limbs.length; k++) {
         const chain = limbs[k];

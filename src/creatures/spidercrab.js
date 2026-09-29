@@ -7,6 +7,7 @@ import { RigSurface } from './rig-collision.js';
 import { exposure, sightRange, sight, awarenessRate, AWARE_SUSPICIOUS, AWARE_CHASE } from './senses.js';
 import { DECK_TOP, DECK_BOTTOM } from '../level/level.js';
 import { mulberry32 } from '../render/textures.js';
+import { patchMaterial } from '../render/shaderlib.js';
 
 // A forty-metre spider crab stalking the reservoir basin on stilt legs, its body a dripping roof over the
 // catwalks. Two pale eyes light whatever it looks at; it cannot see straight down, so the safest place in the
@@ -48,6 +49,7 @@ const BLIND_R = 7;
 const WP_CLEAR = 8;
 const PATH_CLEAR = 7;
 const MAX_SWING = 4;
+const WALK_KNEE_LIFT = 1.2;
 const STAB_WIND = 0.6;
 const STAB_HIT = 0.25;
 const CATCH_R = 2.0;
@@ -131,6 +133,22 @@ export class SpiderCrab {
 
     this.glow = new GlowPoints(4, { core: 1.1, halo: 0.5 });
     this.group.add(this.glow.points);
+    this.eyeGeometry = new THREE.SphereGeometry(1, 20, 12);
+    this.eyeMaterial = new THREE.MeshStandardMaterial({ color: 0x171a19, roughness: 0.5 });
+    this.irisMaterial = new THREE.MeshStandardMaterial({ color: 0x8fa9a6, emissive: 0x779a99, emissiveIntensity: 0.45, roughness: 0.45 });
+    this.pupilMaterial = new THREE.MeshStandardMaterial({ color: 0x010303, roughness: 0.65 });
+    for (const material of [this.eyeMaterial, this.irisMaterial, this.pupilMaterial]) patchMaterial(material, { key: 'crab-eye', probe: this.probe });
+    this.eyes = EYES.map(() => {
+      const eye = new THREE.Group();
+      const ball = new THREE.Mesh(this.eyeGeometry, this.eyeMaterial);
+      ball.scale.set(0.23, 0.19, 0.14);
+      const iris = new THREE.Mesh(this.eyeGeometry, this.irisMaterial);
+      iris.scale.set(0.14, 0.115, 0.035); iris.position.z = 0.11;
+      const pupil = new THREE.Mesh(this.eyeGeometry, this.pupilMaterial);
+      pupil.scale.set(0.032, 0.09, 0.012); pupil.position.z = 0.145;
+      eye.add(ball, iris, pupil); this.group.add(eye);
+      return eye;
+    });
     this.eyeCol = [...EYE_COL];
     this.eyeLamp = lampSys.add({ type: 'creature', x: 0, y: -500, z: 0, color: this.eyeCol, intensity: 0, range: 12 });
     this.gazeLamp = lampSys.add({ type: 'creature', x: 0, y: -500, z: 0, color: this.eyeCol, intensity: 0, range: 8 });
@@ -164,7 +182,7 @@ export class SpiderCrab {
       hipW: new THREE.Vector3(), want: new THREE.Vector3(), idle: new THREE.Vector3(),
       foot: new THREE.Vector3(), from: new THREE.Vector3(), to: new THREE.Vector3(),
       swing: -1, dur: 1, peak: 0, prevY: 0, rip: 0, reach: 0, err: 0, pr: 0,
-      safeFoot: new THREE.Vector3(), hasSafeFoot: false,
+      safeFoot: new THREE.Vector3(), frameFoot: new THREE.Vector3(), hasSafeFoot: false, idleBase: null,
     };
   }
 
@@ -241,6 +259,14 @@ export class SpiderCrab {
       } else {
         // the spare bones now swing a foreleg: nothing else may hang on them
         for (let k = 0; k < 4; k++) if (spare[si.getComponent(v, k)]) si.setComponent(v, k, body);
+      }
+      // Distal skin must follow its own limb. The auto-rig also blended foot
+      // tips with the opposite leg and mouth, stretching skin across the basin.
+      // Keep hip transitions and the weights between bones within the same leg.
+      if (Math.abs(p.z) > 0.2 && dist[best] < 0.06) {
+        for (let k = 0; k < 4; k++) {
+          if (sw.getComponent(v, k) > 0 && legOf[si.getComponent(v, k)] !== best) si.setComponent(v, k, near[best]);
+        }
       }
     }
     si.needsUpdate = true;
@@ -327,9 +353,11 @@ export class SpiderCrab {
   // ------------------------------------------------------------------ public
 
   reset() {
+    this.rand = mulberry32(4242);
+    this.frameDt = null;
     this.poseGuard.ready = false;
     this.bodyGuard.ready = false;
-    for (const L of this.legs) { L.hasSafeFoot = false; L.guard.ready = false; }
+    for (const L of this.legs) { L.hasSafeFoot = false; L.guard.ready = false; L.idleBase = null; }
     this.events.length = 0;
     this.state = 'patrol';
     this.stateT = 0;
@@ -352,9 +380,11 @@ export class SpiderCrab {
     this.spd = 0;
     this.gazeOff = 0;
     this.gazePitch = -0.45;
+    this.tracking = false;
     this.hub.set(HOME[0], 0, HOME[1]);
     this.vel.set(0, 0, 0);
     this.h = -Math.PI / 2;
+    this.fwd.set(Math.sin(this.h) * Math.cos(this.gazePitch), Math.sin(this.gazePitch), Math.cos(this.h) * Math.cos(this.gazePitch));
     this.bob = BODY_Y;
     this.pitch = 0;
     this.roll = 0;
@@ -378,6 +408,13 @@ export class SpiderCrab {
     }
     this._fore(0, 0, null);
     this._pose(0);
+    for (let s = 0; s < 2; s++) {
+      const L = this.legs[NW + s];
+      L.idleBase = this.foreT[s].clone().applyMatrix4(this.rig.rootInv);
+      L.idleBase.y -= 0.05 + 0.02 * Math.sin(s * 2.1);
+      L.idleBase.x -= 0.03 * Math.cos(s * 2.1);
+      L.idleBase.z -= 0.03 * Math.sin(s * 2.1) * L.side;
+    }
     if (!this.poseGuard.reset() || !this.bodyGuard.reset()) throw new Error('crab initial pose does not fit terrain');
     for (const L of this.legs) L.guard.reset();
     for (let s = 0; s < 2; s++) this.prevTip[s].copy(this.foreTip[s]);
@@ -409,6 +446,8 @@ export class SpiderCrab {
   }
 
   update(dt, t, { player, whale = null }) {
+    this.frameDt = dt;
+    for (const L of this.legs) this.rig.toWorld(L.ik.knee, L.ik.T0, L.frameFoot);
     this.events.length = 0;
     const previousX = this.hub.x, previousZ = this.hub.z;
     const p = player.pos;
@@ -418,50 +457,53 @@ export class SpiderCrab {
     this._look(dt, t, player);
     this._think(dt);
     this._steer(dt);
-    const bodyTravel = this._place(dt, t);
-    this.rig.begin();
+    let bodyTravel = this._place(dt, t);
+    this.rig.rootInv.copy(this.rig.root.matrix).invert();
     this._gait(dt, player, whale);
     this._fore(dt, t, player);
-    if (this.group.visible || this.stab) {
-      for (let s = 0; s < 2; s++) this.prevTip[s].copy(this.foreTip[s]);
-      this._pose(t);
-      const travel = this.surface.clear(this.level) ? (this.poseGuard.reset(), 1) : this.poseGuard.constrain();
+    // Render culling must not leave the safe pose behind while the body walks.
+    for (let s = 0; s < 2; s++) this.prevTip[s].copy(this.foreTip[s]);
+    this.rig.begin();
+    this._pose(t);
+    let travel;
+    if (this.surface.clear(this.level)) {
+      this.poseGuard.reset(); travel = 1;
+    } else {
+      // A blocked body must still let the legs finish stepping. Retry their
+      // world-space goals at the last safe body position before sweeping.
+      this.poseGuard.apply(0);
       this._syncPose();
-      if (travel < 1 || bodyTravel < 1) {
-        this.blockedT += dt;
-        this.vel.multiplyScalar(0.5);
-        for (let i = 0; i < NW; i++) {
-          const L = this.legs[i];
-          this.rig.toWorld(L.ik.knee, L.ik.T0, L.foot);
-          L.safeFoot.copy(L.foot); L.swing = -1;
-        }
-      } else this.blockedT = 0;
-      if (travel === 1 && bodyTravel === 1 && this.retreatT <= 0) {
-        const dx = previousX - this.hub.x, dz = previousZ - this.hub.z;
-        if (Math.hypot(dx, dz) > 0.001) this.retreatDir.set(dx, 0, dz).normalize();
-      }
-      if (this.blockedT > 0.5) {
-        this.retreatT = 2;
-        this.blockedT = 0;
-        this.patrolWp = this._nextPatrol();
-      }
-      if (this.retreatT > 0) {
-        this.retreatT -= dt;
-        // Sidling changes travel direction independently of gaze. Retrace actual movement.
-        const r = this.rig.root;
-        r.position.addScaledVector(this.retreatDir, dt * 1.5);
-        this.poseGuard.constrain();
-        this._syncPose();
-        for (let i = 0; i < this.legs.length; i++) {
-          const L = this.legs[i], target = L.fore ? this.foreT[i - NW] : L.foot;
-          this.rig.toWorld(L.ik.knee, L.ik.T0, target);
-          L.safeFoot.copy(target); L.swing = -1; L.guard.reset();
-        }
-        this.bodyGuard.reset();
-      }
-      this._tips();
-      this._hit(player);
+      for (const L of this.legs) L.guard.reset();
+      this.rig.begin();
+      this._pose(t);
+      travel = this.poseGuard.constrain();
+      this.bodyGuard.reset();
+      bodyTravel = 0;
     }
+    this._syncPose();
+    if (travel < 1 || bodyTravel < 1) {
+      this.blockedT += dt;
+      this.vel.multiplyScalar(0.5);
+      for (let i = 0; i < NW; i++) {
+        const L = this.legs[i];
+        this.rig.toWorld(L.ik.knee, L.ik.T0, L.foot);
+        L.safeFoot.copy(L.foot);
+      }
+    } else this.blockedT = 0;
+    if (travel === 1 && bodyTravel === 1 && this.retreatT <= 0) {
+      const dx = previousX - this.hub.x, dz = previousZ - this.hub.z;
+      if (Math.hypot(dx, dz) > 0.001) this.retreatDir.set(dx, 0, dz).normalize();
+    }
+    if (this.blockedT > 0.5) {
+      this.retreatT = 2;
+      this.blockedT = 0;
+      this.patrolWp = this._nextPatrol();
+    }
+    if (this.retreatT > 0) {
+      this.retreatT -= dt;
+    }
+    this._tips();
+    this._hit(player);
     this._effects(dt, t, player);
   }
 
@@ -472,25 +514,28 @@ export class SpiderCrab {
     rig.toWorld(this.bodyBone, EYES[0], _a);
     rig.toWorld(this.bodyBone, EYES[1], _b);
     e.addVectors(_a, _b).multiplyScalar(0.5);
+    const range = sightRange(SIGHT, e.y, p.y);
+    // Acquire with the view cone, then keep watching a visible moving player.
+    // Occlusion and the shelter directly underneath still break sight.
+    const seen = !player.frozen && Math.hypot(p.x - this.hub.x, p.z - this.hub.z) > BLIND_R
+      ? sight(this.level, e, this.fwd, this.tracking ? -1 : COS_VIEW, range, p) : -1;
+    this.tracking = seen >= 0;
     // the gaze sweeps the water ahead while it patrols, and locks on whatever it is after otherwise
     let offT = 0.6 * Math.sin(t * 0.3), pitchT = -0.45 + 0.1 * Math.sin(t * 0.37);
-    if (this.state !== 'patrol' && this.state !== 'feed') {
-      const f = this.focus, dx = f.x - e.x, dz = f.z - e.z;
-      offT = clamp(wrapAngle(Math.atan2(dx, dz) - this.h), -1.2, 1.2);
+    if (this.tracking || (this.state !== 'patrol' && this.state !== 'feed')) {
+      const f = this.tracking ? p : this.focus, dx = f.x - e.x, dz = f.z - e.z;
+      offT = wrapAngle(Math.atan2(dx, dz) - this.h);
       pitchT = clamp(Math.atan2(f.y - e.y, Math.hypot(dx, dz)), -1.2, 0.3);
-      if (this.state === 'search' && this.scanT > 0) offT += 0.4 * Math.sin(t * 0.9);
+      if (!this.tracking && this.state === 'search' && this.scanT > 0) offT += 0.4 * Math.sin(t * 0.9);
     }
-    const k = Math.min(1, dt * 2);
-    this.gazeOff += (offT - this.gazeOff) * k;
+    const k = 1 - Math.exp(-dt * (this.tracking ? 12 : 2));
+    this.gazeOff = wrapAngle(this.gazeOff + wrapAngle(offT - this.gazeOff) * k);
     this.gazePitch += (pitchT - this.gazePitch) * k;
     const gy = this.h + this.gazeOff, cp = Math.cos(this.gazePitch);
     this.fwd.set(Math.sin(gy) * cp, Math.sin(this.gazePitch), Math.cos(gy) * cp);
     this._gazeHit();
     if (this.state === 'feed') return;
 
-    let seen = -1;
-    const range = sightRange(SIGHT, e.y, p.y);
-    if (!player.frozen && Math.hypot(p.x - this.hub.x, p.z - this.hub.z) > BLIND_R) seen = sight(this.level, e, this.fwd, COS_VIEW, range, p);
     if (seen >= 0) {
       let vis = exposure(player, this.lightGrid, this.level, e);
       // caught in the light of its eyes
@@ -588,6 +633,7 @@ export class SpiderCrab {
     const [X0, Z0, X1, Z1] = this.box;
     let gx = hub.x, gz = hub.z, arrive = 2, spd = SPEED[st];
     if (st === 'patrol') {
+      arrive = 0;
       if (this.pause > 0) { this.pause -= dt; spd = 0; }
       [gx, gz] = this.wp[this.patrolWp];
       if (Math.hypot(gx - hub.x, gz - hub.z) < 3) {
@@ -597,7 +643,7 @@ export class SpiderCrab {
     } else if (st === 'suspicious') {
       gx = this.focus.x; gz = this.focus.z; arrive = 10;
     } else if (st === 'chase') {
-      gx = this.focus.x; gz = this.focus.z; arrive = 11;
+      gx = this.focus.x; gz = this.focus.z; arrive = 9;
     } else if (st === 'search') {
       gx = this.lastSeen.x; gz = this.lastSeen.z; arrive = 4;
       if (this.scanT > 0 || Math.hypot(gx - hub.x, gz - hub.z) < 6 || this.stateT > 15) {
@@ -620,7 +666,9 @@ export class SpiderCrab {
       }
     }
     const dx = tx - hub.x, dz = tz - hub.z, dl = Math.hypot(dx, dz);
-    const slow = clamp((Math.hypot(gx - hub.x, gz - hub.z) - arrive) / 6, 0, 1);
+    const distance = st === 'chase' || st === 'suspicious'
+      ? Math.hypot(this.focus.x - hub.x, this.focus.z - hub.z) : Math.hypot(gx - hub.x, gz - hub.z);
+    const slow = clamp((distance - arrive) / 6, 0, 1);
     let wx = dl > 0.01 ? dx / dl : 0, wz = dl > 0.01 ? dz / dl : 0;
     for (const [x0, z0, x1, z1] of this.pillars) {
       const cx = clamp(hub.x, x0, x1), cz = clamp(hub.z, z0, z1), d = Math.hypot(hub.x - cx, hub.z - cz);
@@ -629,7 +677,8 @@ export class SpiderCrab {
       wx += ((hub.x - cx) / d) * k;
       wz += ((hub.z - cz) / d) * k;
     }
-    const want = spd * slow * this.gaitSlow, wl = Math.hypot(wx, wz) || 1;
+    if (this.retreatT > 0) { wx = this.retreatDir.x; wz = this.retreatDir.z; }
+    const want = (this.retreatT > 0 ? 1.5 : spd * slow) * this.gaitSlow, wl = Math.hypot(wx, wz) || 1;
     const k = Math.min(1, dt * 0.8);
     this.vel.x += ((wx / wl) * want - this.vel.x) * k;
     this.vel.z += ((wz / wl) * want - this.vel.z) * k;
@@ -641,7 +690,7 @@ export class SpiderCrab {
     const fx = this.focus.x - hub.x, fz = this.focus.z - hub.z;
     if ((st === 'suspicious' || st === 'chase' || st === 'feed') && Math.hypot(fx, fz) > 3) hw = Math.atan2(fx, fz);
     else if (st === 'search' && this.scanT > 0) hw = this.scanH + 1.3 * Math.sin(this.scanT * 0.6);
-    else if (dl > 0.5 && want > 0.1) hw = Math.atan2(dx, dz);
+    else if (st !== 'patrol' && dl > 0.5 && want > 0.1) hw = Math.atan2(dx, dz);
     const rate = TURN[st] * this.gaitSlow * dt;
     this.h = wrapAngle(this.h + clamp(wrapAngle(hw - this.h), -rate, rate));
   }
@@ -712,8 +761,12 @@ export class SpiderCrab {
       const L = this.legs[i];
       if (L.swing < 0) continue;
       L.swing += dt / L.dur;
-      const k = Math.min(1, L.swing), sk = smooth((k - 0.15) / 0.7);
-      const y = k < 0.5 ? lerp(L.from.y, L.peak, smooth(k / 0.2)) : lerp(L.to.y, L.peak, 1 - smooth((k - 0.8) / 0.2));
+      const k = Math.min(1, L.swing);
+      const sk = L.overDeck ? smooth((k - L.liftEnd) / (L.lowerStart - L.liftEnd)) : smooth((k - 0.15) / 0.7);
+      const y = L.overDeck
+        ? k < L.liftEnd ? lerp(L.from.y, L.peak, smooth(k / L.liftEnd))
+          : k > L.lowerStart ? lerp(L.peak, L.to.y, smooth((k - L.lowerStart) / (1 - L.lowerStart))) : L.peak
+        : lerp(L.from.y, L.to.y, smooth(k)) + (L.peak - Math.max(L.from.y, L.to.y)) * Math.sin(Math.PI * k) ** 2;
       L.foot.set(lerp(L.from.x, L.to.x, sk), y, lerp(L.from.z, L.to.z, sk));
       if (vis) {
         if ((L.prevY < 0) !== (y < 0) && lv.isWater(Math.floor(L.foot.x / 2), Math.floor(L.foot.z / 2))) this._splash(L.foot, y > L.prevY ? 0.5 : 0.7);
@@ -745,6 +798,7 @@ export class SpiderCrab {
       L.err = Math.hypot(L.foot.x - L.want.x, L.foot.z - L.want.z);
       maxErr = Math.max(maxErr, L.err);
       let pr = L.err / stride;
+      if (L.frameFoot.y > this._ground(L.frameFoot.x, L.frameFoot.z) + 0.5) pr += 2;
       if (L.reach > 0.97) pr += 1 + (L.reach - 0.97) * 20;
       if (whale && L.foot.y < 0 && whale.clearance(L.foot.x, L.foot.z) < 2.5) pr += 1;
       L.pr = pr;
@@ -763,14 +817,24 @@ export class SpiderCrab {
   }
 
   _step(L, i, whale) {
+    const settling = L.frameFoot.y > this._ground(L.frameFoot.x, L.frameFoot.z) + 0.5;
     const to = this._pickFoot(L, i, whale);
     if (!to) return false;
-    L.from.copy(L.foot);
+    L.from.copy(L.frameFoot);
+    L.foot.copy(L.from);
     L.to.copy(to);
-    let peak = Math.max(L.from.y, L.to.y) + 3;
-    if (this._crossesDeck(L.from, L.to)) peak = Math.max(peak, DECK_TOP + 2.5);
+    let peak = Math.max(L.from.y, L.to.y) + (settling ? 0.3 : 3);
+    L.overDeck = this._crossesDeck(L.from, L.to);
+    if (L.overDeck) peak = Math.max(peak, DECK_TOP + 2.5);
     L.peak = peak;
     L.dur = (this.state === 'chase' ? 0.6 : 1.0) * (1 + (peak - Math.min(L.from.y, L.to.y)) / 12) * (0.9 + 0.2 * this.rand());
+    L.dur = Math.max(L.dur, L.from.distanceTo(L.to) * 1.9 / (this.state === 'chase' ? 10 : 6));
+    if (L.overDeck) {
+      const rise = peak - L.from.y, fall = peak - L.to.y, carry = Math.max(0.01, Math.hypot(L.from.x - L.to.x, L.from.z - L.to.z));
+      const distance = rise + carry + fall;
+      L.liftEnd = rise / distance; L.lowerStart = (rise + carry) / distance;
+      L.dur = Math.max(L.dur, distance * 1.9 / 10);
+    }
     L.swing = 0;
     L.prevY = L.foot.y;
     L.rip = 0;
@@ -784,9 +848,16 @@ export class SpiderCrab {
   _pickFoot(L, i, whale) {
     const lv = this.level, hip = L.hipW, w = L.want, B = this.anglerBox;
     let best = null, bestS = Infinity;
-    for (let c = 0; c < 17; c++) {
+    const pose = L.hasSafeFoot ? L.guard._snapshot() : null;
+    const rig = this.rig;
+    for (let c = 0; c < (L.hasSafeFoot ? 33 : 17); c++) {
       let x = w.x, z = w.z, off = 0;
-      if (c > 0) {
+      if (c > 16) {
+        const ring = c <= 24 ? 4 : 8, a = (c % 8) * (Math.PI / 4);
+        x = L.safeFoot.x + Math.cos(a) * ring;
+        z = L.safeFoot.z + Math.sin(a) * ring;
+        off = Math.hypot(x - w.x, z - w.z);
+      } else if (c > 0) {
         const ring = c <= 8 ? 2.5 : 5, a = (c % 8) * (Math.PI / 4) + (c > 8 ? Math.PI / 8 : 0);
         x += Math.cos(a) * ring;
         z += Math.sin(a) * ring;
@@ -819,10 +890,19 @@ export class SpiderCrab {
         const o = this.legs[j], q = o.swing >= 0 ? o.to : o.foot;
         if (Math.hypot(q.x - x, q.z - z) < 3) s += 5;
       }
+      if (s < bestS && pose) {
+        rig.reach(L.ik, _a.set(x, fy, z).applyMatrix4(rig.rootInv), WALK_KNEE_LIFT);
+        rig.pose();
+        if (!this.surface.clear(lv, i + 1)) continue;
+      }
       if (s < bestS) {
         bestS = s;
         best = _pick.set(x, fy, z);
       }
+    }
+    if (pose) {
+      L.guard.objects.forEach((o, j) => { o.position.copy(pose[j].p); o.quaternion.copy(pose[j].q); o.scale.copy(pose[j].s); });
+      rig.driven.fill(0); rig.pose();
     }
     return best;
   }
@@ -863,7 +943,7 @@ export class SpiderCrab {
     this.tapCool -= dt;
     this.stabCool -= dt;
     for (let s = 0; s < 2; s++) {
-      const L = this.legs[NW + s], T0 = L.ik.T0, ph = s * 2.1;
+      const L = this.legs[NW + s], T0 = L.idleBase || L.ik.T0, ph = s * 2.1;
       L.idle.set(
         T0.x + 0.03 * Math.cos(t * 0.4 + ph),
         T0.y + 0.05 + 0.02 * Math.sin(t * 0.5 + ph),
@@ -1014,8 +1094,7 @@ export class SpiderCrab {
     const rig = this.rig;
     for (let i = 0; i < this.legs.length; i++) {
       const L = this.legs[i];
-      _a.copy(L.fore ? this.foreT[i - NW] : L.foot).applyMatrix4(rig.rootInv);
-      rig.reach(L.ik, _a, L.fore ? 0.9 : L.swing >= 0 ? 0.8 : 0.45);
+      this._reachLeg(L, L.fore ? this.foreT[i - NW] : L.foot);
     }
     const chew = this.state === 'feed' ? 0.25 : 0;
     this.mouthparts.forEach((b, k) => {
@@ -1045,34 +1124,46 @@ export class SpiderCrab {
     this._tips();
   }
 
+  /** Bound corrections by the previous rendered tip, including collision recovery. */
+  _reachLeg(L, target) {
+    _a.copy(target);
+    if (this.frameDt !== null && L.hasSafeFoot) {
+      const distance = L.frameFoot.distanceTo(_a);
+      const speed = L.fore && this.stab ? 80 : 10;
+      _a.lerpVectors(L.frameFoot, _a, Math.min(1, speed * this.frameDt / (distance || 1)));
+    }
+    this.rig.reach(L.ik, _a.applyMatrix4(this.rig.rootInv), L.fore ? 0.9 : WALK_KNEE_LIFT);
+  }
+
   /** Try alternate footholds with the complete posed thigh and shin, not just the foot. */
   _fitLeg(i) {
     const rig = this.rig, L = this.legs[i], target = L.fore ? this.foreT[i - NW] : L.foot;
     const clear = () => this.surface.clear(this.level, i + 1);
-    if (clear()) { L.safeFoot.copy(target); L.hasSafeFoot = true; return; }
+    if (clear()) { rig.toWorld(L.ik.knee, L.ik.T0, L.safeFoot); L.hasSafeFoot = true; return; }
     const wanted = target.clone(), hip = L.ik.H0.clone().applyMatrix4(rig.root.matrix);
     const tryAt = (p) => {
       const tx = Math.floor(p.x / 2), tz = Math.floor(p.z / 2);
       if (this.level.solid(tx, tz) || (!L.fore && this.level.deckTop(tx, tz) !== null)) return false;
-      rig.reach(L.ik, _a.copy(p).applyMatrix4(rig.rootInv), L.fore ? 0.9 : 0.45);
+      if (!L.fore && _a.copy(p).applyMatrix4(rig.rootInv).z * L.side < L.ik.H0.z * L.side) return false;
+      this._reachLeg(L, p);
       rig.pose();
       if (!clear()) return false;
-      target.copy(p); L.safeFoot.copy(p); L.hasSafeFoot = true;
+      rig.toWorld(L.ik.knee, L.ik.T0, L.safeFoot); target.copy(L.safeFoot); L.hasSafeFoot = true;
       if (!L.fore) L.swing = -1;
       return true;
     };
-    if (L.hasSafeFoot && tryAt(L.safeFoot.clone())) return;
     const dx = wanted.x - hip.x, dz = wanted.z - hip.z;
     for (const factor of [1, 0.85, 0.7, 0.55, 0.4]) for (const angle of [0, 0.2, -0.2, 0.45, -0.45, 0.8, -0.8, 1.2, -1.2]) {
       const x = hip.x + (dx * Math.cos(angle) - dz * Math.sin(angle)) * factor;
       const z = hip.z + (dz * Math.cos(angle) + dx * Math.sin(angle)) * factor;
-      for (const lift of L.fore ? [0, 2, 4, 6] : [0]) {
-        const y = L.fore ? Math.max(wanted.y + lift, this._ground(x, z)) : this._ground(x, z);
+      for (const lift of L.fore ? [0, 2, 4, 6] : [0, 1.5, 3]) {
+        const y = L.fore ? Math.max(wanted.y + lift, this._ground(x, z)) : this._ground(x, z) + lift;
         if (tryAt(new THREE.Vector3(x, y, z))) return;
       }
     }
+    if (L.hasSafeFoot && tryAt(L.safeFoot.clone())) return;
     // The whole-pose guard retains the last valid pose if no foothold is reachable this frame.
-    rig.reach(L.ik, _a.copy(wanted).applyMatrix4(rig.rootInv), L.fore ? 0.9 : 0.45);
+    this._reachLeg(L, wanted);
     rig.pose();
   }
 
@@ -1094,11 +1185,20 @@ export class SpiderCrab {
     for (let k = 0; k < 3; k++) c[k] = lerp(EYE_COL[k], RAGE_COL[k], this.rage);
     if (vis) {
       const flick = 0.9 + 0.1 * Math.sin(t * 7.3) * Math.sin(t * 3.1);
+      this.rig.toWorld(this.bodyBone, EYES[0], _a);
+      this.rig.toWorld(this.bodyBone, EYES[1], _b);
+      this.eye.addVectors(_a, _b).multiplyScalar(0.5);
       for (let k = 0; k < 2; k++) {
         this.rig.toWorld(this.bodyBone, EYES[k], _a);
-        this.glow.set(k * 2, _a.x, _a.y, _a.z, c[0] * 2 * flick, c[1] * 2 * flick, c[2] * 2 * flick, 0.7);
-        this.glow.set(k * 2 + 1, _a.x, _a.y, _a.z, c[0] * 0.3, c[1] * 0.3, c[2] * 0.3, 5);
+        const eye = this.eyes[k];
+        eye.position.copy(_a);
+        eye.lookAt(_b.copy(this.eye).addScaledVector(this.fwd, this.tracking ? this.eye.distanceTo(player.pos) : 30));
+        _a.addScaledVector(eye.getWorldDirection(_c), 0.16);
+        this.glow.set(k * 2, _a.x, _a.y, _a.z, c[0] * flick, c[1] * flick, c[2] * flick, 0.16);
+        this.glow.set(k * 2 + 1, _a.x, _a.y, _a.z, c[0] * 0.12, c[1] * 0.12, c[2] * 0.12, 2);
       }
+      this.irisMaterial.color.setRGB(...c).multiplyScalar(0.28);
+      this.irisMaterial.emissive.setRGB(...c).multiplyScalar(0.2);
       this.glow.upload(4);
       const e = this.eye, g = this.gazeHit;
       Object.assign(this.eyeLamp, { x: e.x, y: e.y, z: e.z, intensity: 1.0 * flick });
@@ -1125,6 +1225,8 @@ export class SpiderCrab {
     this.rig.mesh.skeleton.dispose();
     disposeModelSkin(this.bodyMat);
     this.glow.dispose();
+    this.eyeGeometry.dispose();
+    for (const material of [this.eyeMaterial, this.irisMaterial, this.pupilMaterial]) material.dispose();
     this.voice.dispose();
     for (const l of [this.eyeLamp, this.gazeLamp]) { l.y = -500; l.intensity = 0; }
   }

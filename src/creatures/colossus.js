@@ -570,10 +570,11 @@ export class Colossus {
       return;
     }
     if (this.state === 'rising') {
+      const surfaced = this.y >= WATCH_Y - 0.15;
       const p = Math.min(1, this.t / RISE_TIME);
       this.y = DORMANT_Y + (WATCH_Y - DORMANT_Y) * smooth(p) + Math.sin(p * Math.PI) * 0.8;
       if (p > 0.72) this._look(dt, player);
-      if (p >= 1) { this.state = 'watch'; this.t = 0; }
+      if (p >= 1 && surfaced) { this.state = 'watch'; this.t = 0; }
       this._turn(dt, 0.22);
       return;
     }
@@ -982,6 +983,7 @@ export class Colossus {
   _simHanging(list, bundle, dt, t, writhe, stiff) {
     const dt2 = dt * dt;
     const nz = this.noise;
+    const travelling = this.state === 'rising' || this.state === 'sinking' || this.state === 'dormant';
     for (let k = 0; k < list.length; k++) {
       const f = list[k], c = f.chain;
       this._headPoint(f.rootLocal, f.w, _a);
@@ -995,7 +997,14 @@ export class Colossus {
         c.p[o] += (nz(s, t * 0.5, 0.5) - 0.5) * w * dt2 * 2;
         c.p[o + 1] += ((c.p[o + 1] < 0 ? 0.6 : -7) + (nz(s, t * 0.5, 7.5) - 0.5) * w) * dt2;
         c.p[o + 2] += (nz(s, t * 0.5, 13.5) - 0.5) * w * dt2 * 2;
+        if (travelling) {
+          // Gather the hanging limbs beneath their attachments before entering the
+          // shaft; buoyant loose ends otherwise hook its rim and pin the whole head.
+          const reach = i * c.seg;
+          c.pull(i, _a.x, _a.y - reach * 0.85, _a.z, 1 - Math.exp(-dt * 2.5));
+        }
       }
+      if (travelling) _b.set(0, -1, 0);
       c.constrain(_a.x, _a.y, _a.z, _b.x, _b.y, _b.z, stiff, true);
       collideChain(this.terrain, c, true, 12, true);
       c.frames(_fwd.x, _fwd.y, _fwd.z);

@@ -9,7 +9,8 @@
   "scripts": {
     "dev": "vite",
     "lint": "eslint .",
-    "test:regression": "node tools/navigation-check.mjs && node tools/creature-check.mjs && node tools/creature-collision-check.mjs --strict",
+    "test:crab": "node tools/crab-motion-check.mjs",
+    "test:regression": "node tools/navigation-check.mjs && node tools/creature-check.mjs && node tools/creature-collision-check.mjs --strict && npm run test:crab",
     "check": "npm run lint && npm run test:regression && npm run build",
     "build": "vite build",
     "preview": "vite preview"

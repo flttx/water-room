@@ -7,10 +7,10 @@ import { attackClear, moveSphere } from './collision.js';
 import { RigSurface } from './rig-collision.js';
 import { mulberry32 } from '../render/textures.js';
 
-// A dead whale that never stopped swimming. Twenty-eight metres of grey, peeling carcass circles the reservoir
-// basin in a slow figure of eight, lit only by the things eating it. It is blind and hunts by ear: a splash turns
-// it, and it rises under whatever made the noise. Its body is the rigged Tripo model (public/models/whale.glb,
-// snout at +z, up +y): every spine bone is laid along the path its head has swum, the flippers row by FK.
+// A dead whale that never stopped swimming. Twenty-eight metres of grey, peeling carcass drifts beside
+// the reservoir catwalk, lit by the things eating it. It is blind and hunts nearby splashes by ear.
+// Its rigged Tripo body follows a clear spine guide (public/models/whale.glb, snout at +z, up +y);
+// the flippers row by FK even when the current turns.
 
 const S = 29;
 const Z_HEAD = 0.487;
@@ -24,20 +24,20 @@ const MOUTH = new THREE.Vector3(0, 0.09, 0.455);
 // body radius along the spine (metres), head to flukes
 const PROFILE = [1.6, 2.4, 2.6, 2.5, 2.1, 1.6, 1.0, 0.6, 0.45];
 const SPEED = { drift: 2.6, return: 3, suspicious: 3.2, hunt: 5.5, feed: 1.2 };
-const TURN = { drift: 0.5, return: 0.55, suspicious: 0.6, hunt: 0.85, feed: 0.3 };
 const CRUISE_Y = -5;
-const Y_MIN = -5.2;
-const Y_MAX = -3;
-const LOOK = 8;
+// The full tail cannot pass the northern pillar gap. Drift along the clear middle
+// reach; keep the rest of the curve to lay out the 28.5 m body behind it.
+const REACH_MIN = 37;
+const REACH_MAX = 49;
 const CATCH_R = 4.2;
 const GLOW_COL = [0.4, 1.0, 0.7];
 const GLOWS = 26;
 
-// Figure of eight through the basin (world metres): down the middle lane, round the west pillars, down the middle
-// again and round the east ones. Kept about five metres off every pillar.
+// Spine guide around the western pillars (world metres). The head stays on the
+// middle reach beside the north catwalk; the broad flukes remain in open water.
 const ROUTE = [
-  [262, 78], [262, 88], [255, 94], [244, 93], [239, 82], [241, 70], [250, 66], [258, 68.5],
-  [262, 78], [262, 88], [269, 94], [282, 92], [286, 82], [284, 71], [276, 68], [266, 70],
+  [239, 82], [239, 71], [247, 65.5], [254, 66.5], [261, 76],
+  [261, 87], [252, 94], [241, 93],
 ];
 const STEP = 0.5;
 
@@ -48,7 +48,6 @@ const _q2 = new THREE.Quaternion();
 const Y_AXIS = new THREE.Vector3(0, 1, 0);
 const Z_AXIS = new THREE.Vector3(0, 0, 1);
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 
 /** Closed Catmull-Rom through ROUTE, resampled every STEP metres of arc: Float32Array of x, z. */
 function buildRoute() {
@@ -89,12 +88,6 @@ export class Whale {
     this.route = buildRoute();
     this.routeN = this.route.length / 2;
     this.routeLen = this.routeN * STEP;
-    const [bx0, bz0, bx1, bz1] = level.reservoir.basin;
-    this.box = [bx0 * 2, bz0 * 2, (bx1 + 1) * 2, (bz1 + 1) * 2];
-    this.pillars = [];
-    for (let z = bz0; z <= bz1; z++) {
-      for (let x = bx0; x <= bx1; x++) if (level.ch(x, z) === 'P') this.pillars.push([x * 2, z * 2, x * 2 + 2, z * 2 + 2]);
-    }
 
     this.probe = { value: new THREE.Color(0.006, 0.012, 0.012) };
     this.rim = { value: new THREE.Color(0.006, 0.014, 0.013) };
@@ -131,7 +124,6 @@ export class Whale {
     this.poseGuard = this.surface.guard(level);
     this.previousHead = new THREE.Vector3();
     this.previousChain = new Float32Array(this.chain.p.length);
-    this.previousTrail = new Float32Array(this.trail.length);
     this.blockedT = 0;
     this.reset(true);
   }
@@ -172,7 +164,9 @@ export class Whale {
     if (full || !this.inited) {
       this.phase = 0;
       this.inited = true;
-      this.u = this.routeLen * 0.62;
+      this.driftPhase = 0;
+      this.driftCenter = (REACH_MIN + REACH_MAX) / 2;
+      this.u = this.driftCenter;
       const [x, z, tx, tz] = this._pathAt(this.u, [0, 0, 0, 0]);
       this.head.set(x, CRUISE_Y, z);
       this.yaw = Math.atan2(tx, tz);
@@ -183,7 +177,6 @@ export class Whale {
       this.spd = SPEED.drift;
       this.state = 'drift';
     } else {
-      this.u = this._nearestU(this.head.x, this.head.z, null);
       this.state = 'return';
       // Respawning resets awareness, while preserving the last collision-safe body pose.
       this.voice.setState('patrol');
@@ -236,16 +229,16 @@ export class Whale {
     this._think(dt, player);
     this.previousHead.copy(this.head);
     this.previousChain.set(this.chain.p);
-    this.previousTrail.set(this.trail);
+    const previousU = this.u;
     this._swim(dt, t);
-    this._trailPush();
+    this._routeTrail();
     this._layChain(dt);
     this._pose(t);
     const travel = this.poseGuard.constrain();
     if (travel < 1) {
+      this.u = previousU + (this.u - previousU) * travel;
       this.head.lerpVectors(this.previousHead, this.head, travel);
-      this.trail.set(this.previousTrail);
-      this._trailPush();
+      this._routeTrail();
       for (let i = 0; i < this.chain.p.length; i++) this.chain.p[i] = this.previousChain[i] + (this.chain.p[i] - this.previousChain[i]) * travel;
       this.chain.frames(0, 1, 0);
       this.blockedT = 1.5;
@@ -270,7 +263,6 @@ export class Whale {
       this.events.push({ type: 'suspicious', source: 'whale' });
       this.voice.click();
     } else if (s === 'return') {
-      this.u = this._nearestU(this.head.x, this.head.z, null);
       if (prev === 'hunt') this.events.push({ type: 'lost', source: 'whale' });
     }
     this.voice.setState(s === 'hunt' || s === 'feed' ? 'chase' : s === 'suspicious' ? 'suspicious' : 'patrol');
@@ -314,62 +306,36 @@ export class Whale {
   }
 
   _swim(dt, t) {
-    const h = this.head, st = this.state;
-    let tx, tz, ty;
-    if (st === 'suspicious' || st === 'hunt') {
-      tx = this.focus.x;
-      tz = this.focus.z;
-      ty = st === 'hunt' ? this.focus.y - 1.2 : Math.min(-4, this.focus.y - 3);
-    } else {
-      this.u = this._nearestU(h.x, h.z, this.u);
-      const q = this._pathAt(this.u + LOOK, [0, 0, 0, 0]);
-      tx = q[0];
-      tz = q[1];
-      ty = CRUISE_Y + 0.5 * Math.sin(t * 0.09);
-    }
-    ty = clamp(ty, Y_MIN, Y_MAX);
-    if (this.blockedT > 0) {
-      this.blockedT -= dt;
-      // Give the trailing body room to clear the obstacle before approaching the target again.
-      const q = this._pathAt(this.u + LOOK * 2, [0, 0, 0, 0]);
-      tx = q[0]; tz = q[1]; ty = CRUISE_Y;
-    }
-    let wx = tx - h.x, wz = tz - h.z;
-    const wl = Math.hypot(wx, wz) || 1;
-    wx /= wl; wz /= wl;
-    // pillars and basin walls push the heading away
-    for (const [x0, z0, x1, z1] of this.pillars) {
-      const cx = clamp(h.x, x0, x1), cz = clamp(h.z, z0, z1);
-      const d = Math.hypot(h.x - cx, h.z - cz);
-      if (d > 7 || d < 1e-3) continue;
-      const k = ((7 - d) / 7) * 1.6;
-      wx += ((h.x - cx) / d) * k;
-      wz += ((h.z - cz) / d) * k;
-    }
-    const [X0, Z0, X1, Z1] = this.box;
-    wx += Math.max(0, 7 - (h.x - X0)) * 0.25 - Math.max(0, 7 - (X1 - h.x)) * 0.25;
-    wz += Math.max(0, 7 - (h.z - Z0)) * 0.25 - Math.max(0, 7 - (Z1 - h.z)) * 0.25;
-    const want = Math.atan2(wx, wz);
-    const rate = TURN[st];
-    this.yaw = wrapAngle(this.yaw + clamp(wrapAngle(want - this.yaw), -rate * dt, rate * dt));
-    // slow down to turn hard
-    const turn = Math.abs(wrapAngle(want - this.yaw));
-    const target = SPEED[st] * (st === 'hunt' && wl < 5 ? 0.6 : 1) * (1 - Math.min(0.4, turn * 0.25));
-    this.spd += (target - this.spd) * Math.min(1, dt * (st === 'hunt' ? 0.9 : 0.4));
-    h.x = clamp(h.x + Math.sin(this.yaw) * this.spd * dt, X0 + 4.5, X1 - 4.5);
-    h.z = clamp(h.z + Math.cos(this.yaw) * this.spd * dt, Z0 + 4.5, Z1 - 4.5);
-    h.y += clamp((ty - h.y) * 0.6, -1.6, 1.6) * dt;
+    const following = this.state === 'suspicious' || this.state === 'hunt';
+    const middle = (REACH_MIN + REACH_MAX) / 2;
+    const focusU = following ? clamp(this._nearestU(this.focus.x, this.focus.z, null), REACH_MIN + 4, REACH_MAX - 4) : middle;
+    this.driftCenter += (focusU - this.driftCenter) * Math.min(1, dt * 0.4);
+    this.driftPhase += dt * (following ? 0.26 : 0.16);
+    // Smoothly reverse with the current before a wide fin reaches either pillar.
+    // A suspicious whale still cruises around the sound instead of pinning its body there.
+    const reach = Math.min(this.driftCenter - REACH_MIN, REACH_MAX - this.driftCenter);
+    const targetU = this.driftCenter + reach * Math.sin(this.driftPhase);
+    const speed = following ? 1.8 : 1.1;
+    const step = clamp(targetU - this.u, -speed * dt, speed * dt);
+    this.u += step;
+    const actualSpeed = dt > 0 ? Math.abs(step) / dt : 0;
+    this.spd += (actualSpeed - this.spd) * Math.min(1, dt * 2);
+    const q = this._pathAt(this.u, [0, 0, 0, 0]);
+    this.head.set(q[0], CRUISE_Y + 0.2 * Math.sin(t * 0.19), q[1]);
+    this.yaw = Math.atan2(q[2], q[3]);
     this.phase += dt * (0.8 + this.spd * 0.22);
+    this.blockedT = Math.max(0, this.blockedT - dt);
   }
 
-  _trailPush() {
-    const tr = this.trail, h = this.head;
-    if (Math.hypot(h.x - tr[0], h.y - tr[1], h.z - tr[2]) < TRAIL_STEP) return;
-    tr.copyWithin(3, 0, (TRAIL - 1) * 3);
-    tr[0] = h.x; tr[1] = h.y; tr[2] = h.z;
+  /** Both directions use the same clear spine guide, including during a reversal. */
+  _routeTrail() {
+    for (let k = 0; k < TRAIL; k++) {
+      const q = this._pathAt(this.u - (k + 1) * TRAIL_STEP, [0, 0, 0, 0]);
+      this.trail.set([q[0], this.head.y, q[1]], k * 3);
+    }
   }
 
-  /** Chain points every seg metres back along the swum path, with the flukes beating up and down. */
+  /** Chain points every seg metres back along the spine guide, with the flukes beating up and down. */
   _layChain() {
     const c = this.chain, tr = this.trail, seg = c.seg;
     let ax = this.head.x, ay = this.head.y, az = this.head.z;
