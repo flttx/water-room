@@ -798,7 +798,7 @@ export class SpiderCrab {
       L.err = Math.hypot(L.foot.x - L.want.x, L.foot.z - L.want.z);
       maxErr = Math.max(maxErr, L.err);
       let pr = L.err / stride;
-      if (L.frameFoot.y > this._ground(L.frameFoot.x, L.frameFoot.z) + 0.5) pr += 2;
+      if (L.foot.y > this._ground(L.foot.x, L.foot.z) + 0.5) pr += 2;
       if (L.reach > 0.97) pr += 1 + (L.reach - 0.97) * 20;
       if (whale && L.foot.y < 0 && whale.clearance(L.foot.x, L.foot.z) < 2.5) pr += 1;
       L.pr = pr;
@@ -1113,10 +1113,12 @@ export class SpiderCrab {
       L.guard.apply(1);
       if (!previousFits && L.guard.clear()) { L.guard.reset(); continue; }
       if (L.guard.constrain() === 1) continue;
-      const target = L.fore ? this.foreT[i - NW] : L.foot;
-      rig.toWorld(L.ik.knee, L.ik.T0, target);
-      L.safeFoot.copy(target);
-      if (!L.fore) L.swing = -1;
+      if (L.fore || L.swing < 0) {
+        const target = L.fore ? this.foreT[i - NW] : L.foot;
+        rig.toWorld(L.ik.knee, L.ik.T0, target);
+        L.safeFoot.copy(target);
+        if (!L.fore) L.swing = -1;
+      }
     }
     // Some imported skin vertices blend across adjacent legs. Recheck those
     // shared patches after all independent leg sweeps have been resolved.
@@ -1148,23 +1150,26 @@ export class SpiderCrab {
       this._reachLeg(L, p);
       rig.pose();
       if (!clear()) return false;
-      rig.toWorld(L.ik.knee, L.ik.T0, L.safeFoot); target.copy(L.safeFoot); L.hasSafeFoot = true;
-      if (!L.fore) L.swing = -1;
+      rig.toWorld(L.ik.knee, L.ik.T0, L.safeFoot);
+      if (L.fore || L.swing < 0) {
+        target.copy(L.safeFoot);
+        L.hasSafeFoot = true;
+        if (!L.fore) L.swing = -1;
+      }
       return true;
     };
     const dx = wanted.x - hip.x, dz = wanted.z - hip.z;
-    for (const factor of [1, 0.85, 0.7, 0.55, 0.4]) for (const angle of [0, 0.2, -0.2, 0.45, -0.45, 0.8, -0.8, 1.2, -1.2]) {
+    for (const factor of [1, 1.1, 0.85, 0.7, 0.55, 0.4]) for (const angle of [0, 0.2, -0.2, 0.45, -0.45, 0.8, -0.8, 1.2, -1.2, 1.5, -1.5]) {
       const x = hip.x + (dx * Math.cos(angle) - dz * Math.sin(angle)) * factor;
       const z = hip.z + (dz * Math.cos(angle) + dx * Math.sin(angle)) * factor;
-      for (const lift of L.fore ? [0, 2, 4, 6] : [0, 1.5, 3]) {
+      for (const lift of L.fore ? [0, 2, 4, 6] : [0]) {
         const y = L.fore ? Math.max(wanted.y + lift, this._ground(x, z)) : this._ground(x, z) + lift;
         if (tryAt(new THREE.Vector3(x, y, z))) return;
       }
     }
     if (L.hasSafeFoot && tryAt(L.safeFoot.clone())) return;
     // The whole-pose guard retains the last valid pose if no foothold is reachable this frame.
-    this._reachLeg(L, wanted);
-    rig.pose();
+    L.guard.apply(0);
   }
 
   _tips() {
